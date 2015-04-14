@@ -204,8 +204,9 @@ DO k=1,tile_pts
 !     shallow snowpack has been exhausted in this timestep.
 
 ! If density exceeds that of ice, then reset to ice density (SEG)
-    IF (rho > 917.0) 
-    rho = 917.0  ! Limit to ice density
+! The isnan() call is meant to trap numeric errors from above
+    IF (rho > 917.0 .or. isnan(rho)) 
+     rho = 917.0  ! Limit to ice density
 !
     IF ( rho > EPSILON(rho) )                                     &
       ds(l,n) = (sice(l,n) + sliq(l,n)) / rho
