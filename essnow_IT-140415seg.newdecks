@@ -203,10 +203,9 @@ DO k=1,tile_pts
 !     Note: mass (and hence rho) can be zero but nsnow>0 (likely 1!) if a very
 !     shallow snowpack has been exhausted in this timestep.
 
-! If depth of layers up to this one > 10m, then this layer is ice
-! (i.e. density = 917):
-    IF (SUM(ds(l, 1:n)) >= 10.0) rho = 917.0
-    rho = MIN(rho, 917.0)
+! If density exceeds that of ice, then reset to ice density (SEG)
+    IF (rho > 917.0) 
+    rho = 917.0  ! Limit to ice density
 !
     IF ( rho > EPSILON(rho) )                                     &
       ds(l,n) = (sice(l,n) + sliq(l,n)) / rho
