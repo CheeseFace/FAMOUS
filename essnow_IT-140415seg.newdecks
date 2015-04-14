@@ -1,0 +1,2544 @@
+*DECK CANOPYSNOW
+*/-----
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE CANOPYSNOW-----------------------------------------------
+
+! Description:
+!     Partition snowfall into canopy interception, throughfall and unloading.
+
+! Subroutine Interface:
+SUBROUTINE canopysnow ( land_pts,tile_pts,timestep,cansnowtile    &
+,                       tile_index,catch_snow,con_snow,ls_snow    &
+,                       melt_tile,snow_can,snowfall )
+
+USE snow_param, ONLY :                                            &
+!  imported scalars with intent(in)
+ snowinterceptfact                                                &
+                    !   constant in relationship between mass of
+!                             intercepted snow and snowfall rate
+,snowunloadfact      !   constant in relationship between canopy snow
+!                             unloading and canopy snow melt rate
+
+IMPLICIT NONE
+
+! Scalar arguments with intent(in)
+INTEGER,INTENT(IN) ::                                             &
+ land_pts                                                         &
+                           !  Number of land points
+,tile_pts                  !  Number of tile points
+
+REAL, INTENT(IN) ::                                               &
+ timestep                  !  Timestep (s)
+
+LOGICAL, INTENT(IN) ::                                            &
+ cansnowtile               !  Switch for canopy snow model
+
+! Array arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ tile_index(land_pts)      !  Index of tile points
+
+REAL, INTENT(IN) ::                                               &
+ catch_snow(land_pts)                                             &
+                           !  Canopy snow capacity (kg/m2)
+,con_snow(land_pts)                                               &
+                           !  Convective snowfall rate (kg/m2/s)
+,ls_snow(land_pts)                                                &
+                           !  Large-scale snowfall rate (kg/m2/s)
+,melt_tile(land_pts)       !  Canopy snow melt rate (kg/m2/s)
+
+! Array arguments with intent(inout)
+REAL, INTENT(INOUT) ::                                            &
+ snow_can(land_pts)      !  Canopy snow load, if the
+!                              !  canopy snow model is selected (kg/m2)
+
+! Array arguments with intent(out)
+REAL, INTENT(OUT) ::                                              &
+ snowfall(land_pts)      !  Snow reaching the ground in timestep
+                         !  (kg/m2)
+
+! Local scalars
+INTEGER ::                                                        &
+ i                                                                &
+                         !  Land point index
+,k                       !  Tile point index
+
+REAL ::                                                           &
+ intercept                                                        &
+                       !  Snow intercepted by canopy in timestep
+                       !  (kg/m2)
+,unload                !  Canopy snow unloaded in timestep (kg/m2)
+
+!-------------------------------------------------------------------------------
+
+IF ( cansnowtile ) THEN
+
+  DO k=1,tile_pts
+    i = tile_index(k)
+    snowfall(i) = ( ls_snow(i) + con_snow(i) ) * timestep
+    intercept = snowinterceptfact * (catch_snow(i) - snow_can(i)) &
+                  * (1.0 - EXP(-snowfall(i)/catch_snow(i)))
+    unload = snowunloadfact * melt_tile(i) * timestep
+!-----------------------------------------------------------------------
+!         At this point, the value of unload can be larger than the
+!         amount of snow on the canopy (which has already had melt
+!         and sublimation removed), so we need to limit to the amount
+!         of snow available. However, snow_can can be <0 (with small
+!         absolute value) because of "issues" in the surface flux code,
+!         so we also restrict unload to be >=0.
+!-----------------------------------------------------------------------
+    unload = MAX( MIN( unload, snow_can(i) ), 0.0 )
+    snow_can(i) = snow_can(i) + intercept - unload
+    snowfall(i) = snowfall(i) - intercept + unload
+  END DO
+
+ELSE
+
+  DO k=1,tile_pts
+    i = tile_index(k)
+    snowfall(i) = ( ls_snow(i) + con_snow(i) ) * timestep
+  END DO
+
+END IF
+
+END SUBROUTINE canopysnow
+!!!!!#endif
+*/
+*/
+*/-----
+*DECK COMPACTSNOW
+*/-----
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE COMPACTSNOW-----------------------------------------------
+
+! Description:
+!     Mechanical compaction of snow
+
+! Subroutine Interface:
+SUBROUTINE compactsnow ( nsmax,land_pts,tile_pts,timestep,nsnow,      &
+                         tile_index,sice,sliq,tsnow,rho_snow,ds )
+
+
+
+USE c_g, ONLY :                                                   &
+!  imported scalar parameters
+ g       !  mean acceleration due to gravity at
+!              !  earth's surface (m s-2)
+
+IMPLICIT NONE
+
+! Scalar arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ land_pts                                                         &
+                         ! Total number of land points
+ ,nsmax   &
+                         !  Maximum possible number of snow layers
+,tile_pts                ! Number of tile points
+
+REAL, INTENT(IN) ::                                               &
+ timestep                ! Timestep (s)
+
+! Array arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ nsnow(land_pts)                                                  &
+                         ! Number of snow layers
+,tile_index(land_pts)    ! Index of tile points
+
+REAL, INTENT(IN) ::                                               &
+ sice(land_pts,nsmax)                                             &
+                         ! Ice content of snow layers (kg/m2)
+,sliq(land_pts,nsmax)                                             &
+                         ! Liquid content of snow layers (kg/m2)
+,tsnow(land_pts,nsmax)   ! Snow layer temperatures (K)
+
+! Array arguments with intent(inout)
+REAL, INTENT(INOUT) ::                                            &
+ rho_snow(land_pts,nsmax)  ! Snow layer densities (kg/m3)
+
+! Array arguments with intent(out)
+REAL, INTENT(OUT) ::                                              &
+ ds(land_pts,nsmax)          ! Snow layer thicknesses (m)
+
+! Local scalars
+INTEGER ::                                                        &
+ k                                                                &
+                       ! Tile point index
+,l                                                                &
+                       ! Land point index
+,n                     ! Snow layer index
+
+REAL ::                                                           &
+ mass                                                             &
+                       ! Overlying mass of snow (kg/m2)
+,rho                   ! Snow density (kg/m3)
+
+!-------------------------------------------------------------------------------
+
+DO k=1,tile_pts
+  l = tile_index(k)
+
+  mass = 0.
+  ds(l,:) = 0.0
+
+  DO n=1,nsnow(l)
+    mass = mass + 0.5 * (sice(l,n) + sliq(l,n))
+    rho = rho_snow(l,n)
+    rho = rho + 0.5e-7 * rho * g * mass * timestep *              &
+                EXP(14.643 - 4e3 / tsnow(l,n) - 0.02 * rho)
+!     Note: mass (and hence rho) can be zero but nsnow>0 (likely 1!) if a very
+!     shallow snowpack has been exhausted in this timestep.
+
+! If depth of layers up to this one > 10m, then this layer is ice
+! (i.e. density = 917):
+    IF (SUM(ds(l, 1:n)) >= 10.0) rho = 917.0
+    rho = MIN(rho, 917.0)
+!
+    IF ( rho > EPSILON(rho) )                                     &
+      ds(l,n) = (sice(l,n) + sliq(l,n)) / rho
+    rho_snow(l,n) = rho
+    mass = mass + 0.5 * (sice(l,n) + sliq(l,n))
+  END DO
+END DO
+
+END SUBROUTINE compactsnow
+!!!!!#endif
+*/
+*/
+*/-----
+*DECK LAYERSNOW
+*/-----
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE LAYERSNOW-----------------------------------------------
+
+! Description:
+!     Divide snow pack into layers if it exceeds a minimum depth.
+
+! Subroutine Interface:
+SUBROUTINE layersnow ( nsmax,land_pts,tile_pts,tile_index,snowdepth,  &
+                       nsnow,ds,dzsnow )
+
+
+
+IMPLICIT NONE
+
+! Scalar arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ land_pts                                                         &
+                      !  Number of land points
+ ,nsmax &
+                      !  Maximum possible number of snow layers
+,tile_pts             !  Number of tile points
+
+! Array arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ tile_index(land_pts)    !  Index of tile points
+
+REAL, INTENT(IN) ::                                               &
+ snowdepth(land_pts) &     
+                        !  Snow depth (m)
+, dzsnow(nsmax)
+
+! Array arguments with intent(out)
+INTEGER, INTENT(OUT) ::                                           &
+ nsnow(land_pts)         !  Number of snow layers
+
+REAL, INTENT(OUT) ::                                              &
+ ds(land_pts,nsmax)     !  Snow layer thicknesses (m)
+
+! Local scalars
+INTEGER ::                                                        &
+ k                                                                &
+                     !  Tile point index
+,l                                                                &
+                     !  Land point index
+,n                   !  Snow layer index
+
+REAL ::                                                           &
+ remains             !  Remaining depth of snow for other layers
+
+!-------------------------------------------------------------------------------
+
+! Initialise number of layers. This value is not changed for the zero-layer model.
+nsnow(:) = 0
+
+IF ( nsmax > 0 ) THEN
+
+  DO k=1,tile_pts
+    l = tile_index(k)
+!     Initialise layer depths.
+    ds(l,:) = 0.0
+
+!   Only divide into layers if depth is >= a threshold.
+    IF ( snowdepth(l) >= dzsnow(1) ) THEN
+      remains = snowdepth(l)
+
+      DO n=1,nsmax
+        ds(l,n) = dzsnow(n)
+        remains = remains - dzsnow(n)
+        IF ( remains <= dzsnow(n) .OR. n == nsmax ) THEN
+          ds(l,n) = ds(l,n) + remains
+          EXIT
+        END IF
+      END DO
+
+!     Set number of layers.
+      nsnow(l) = n
+    END IF    !  >dzSnow(1)
+
+  END DO
+
+END IF  !  nsmax
+
+END SUBROUTINE layersnow
+!!!!!#endif
+*/
+*/
+*/-----
+*DECK RELAYERSNOW
+*/-----
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE RELAYERSNOW-----------------------------------------------
+
+! Description:
+!     Redivide snowpack after changes in depth, conserving mass and energy
+
+! Subroutine Interface:
+SUBROUTINE relayersnow( nsmax,land_pts,tile_pts,tile_index,       &
+                        rgrain0,rho0,sice0,snowfall,snowmass,     &
+                        tsnow0,nsnow,ds,rgrain,rgrainl,sice,      &
+                        rho_snow_grnd,sliq,tsnow,rho_snow,        &
+                        snowdepth, l_snow_albedo, dzsnow )
+
+
+USE c_0_dg_c, ONLY :                                              &
+!  imported scalar parameters
+ tm   !   temperature at which fresh water freezes and ice melts (K)
+
+USE c_perma, ONLY :                                               &
+!  imported scalar parameters
+ hcapi                                                            &
+            !  Specific heat capacity of ice (J/kg/K)
+,hcapw      !  Specific heat capacity of water (J/kg/K)
+
+USE snow_param, ONLY :                                            &
+!  imported scalars with intent(in)
+ rho_snow_const  !  constant density of lying snow (kg per m**3)
+
+USE rad_param, ONLY :                                             &
+!  imported scalars with intent(in)
+ r0         !  Grain size for fresh snow (microns)
+
+
+IMPLICIT NONE
+
+! Scalar arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ land_pts                                                         &
+                    ! Total number of land points
+ ,nsmax          &
+                    !  Maximum possible number of snow layers
+,tile_pts           ! Number of tile points
+
+! Array arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ tile_index(land_pts)     ! Index of tile points
+
+REAL, INTENT(IN) ::                                               &
+ rgrain0(land_pts)                                                &
+                    ! Fresh snow grain size (microns)
+,rho0(land_pts)                                                   &
+                    ! Density of fresh snow (kg/m3)
+,sice0(land_pts)                                                  &
+                    ! Ice content of fresh snow (Kg/m2)
+!                         ! Where NSNOW=0, SICE0 is the mass
+!                         ! of the snowpack.
+,snowfall(land_pts)                                               &
+                    ! Snowfall reaching the ground (kg/m2)
+,snowmass(land_pts)                                               &
+                    ! Snow mass on the ground (kg/m2)
+,tsnow0(land_pts)   &
+                        ! Temperature of fresh snow (K)
+, dzsnow(nsmax)                                                  
+
+
+
+LOGICAL, INTENT(IN) ::                                            &
+ l_snow_albedo
+!
+
+! Array arguments with intent(inout)
+INTEGER, INTENT(INOUT) ::                                         &
+ nsnow(land_pts)       ! Number of snow layers
+
+REAL, INTENT(INOUT) ::                                            &
+ ds(land_pts,nsmax)                                               &
+                       ! Snow layer thicknesses (m)
+,rgrain(land_pts)                                                 &
+                       ! Snow surface grain size (microns)
+,rgrainl(land_pts,nsmax)                                          &
+                       ! Snow grain size (microns)
+,rho_snow_grnd(land_pts)                                          &
+                       ! Snowpack bulk density (kg/m3)
+,sice(land_pts,nsmax)                                             &
+                       ! Ice content of snow layers (kg/m2)
+,sliq(land_pts,nsmax)                                             &
+                       ! Liquid content of snow layers (kg/m2)
+,tsnow(land_pts,nsmax) ! Snow layer temperatures (K)
+
+! Array arguments with intent(out)
+REAL, INTENT(OUT) ::                                              &
+ rho_snow(land_pts,nsmax)                                         &
+                       ! Snow layer densities (kg/m3)
+,snowdepth(land_pts)   ! Snow depth (m)
+
+! Local scalar parameters
+REAL, PARAMETER :: thin_snow_limit = 1.0e-12
+                  ! Maximum snow thickness (m) that is neglected
+                  ! during relayering. All contributions
+                  ! (mass, energy etc) from that snow are
+                  ! neglected.
+
+! Local scalars
+INTEGER ::                                                        &
+ i                                                                &
+                       ! Land point index
+,iznew                                                            &
+                       ! layer index
+,izz                                                              &
+                       ! layer index
+,k                                                                &
+                       ! Tile point index
+,n                                                                &
+                       ! Snow layer index
+,new                                                              &
+                       ! layer index
+,old                   ! layer index
+
+REAL ::                                                           &
+ csnow                                                            &
+                       ! Areal heat capacity of layer (J/K/m2)
+,oldremains                                                       &
+                       ! remaining depth in an old layer (m)
+,wt                    ! weight given to a layer value
+
+! Local arrays
+INTEGER ::                                                        &
+ nold(land_pts)        ! Number of layers before adjustment
+
+REAL ::                                                           &
+ d0(land_pts,0:nsmax)                                             &
+                        ! Layer thicknesses before adjustment (m)
+!                             ! D0(:,0) represents new snow if NSNOW>0,
+!                             ! otherwise it is all snow.
+,e(0:nsmax)                                                       &
+                     ! Internal energy before adjustment (J/m2)
+,newremains(nsmax)                                                &
+                     ! available (unfilled) depth in new layer (m)
+,r(0:nsmax)                                                       &
+                     ! Grain size before adjustment (kg/m2)
+,s(0:nsmax)                                                       &
+                     ! Ice content before adjustment (kg/m2)
+,w(0:nsmax)                                                       &
+                     ! Liquid content before adjustment (kg/m2)
+,u(nsmax)            ! Layer energy contents
+
+!-----------------------------------------------------------------------
+! External routines used
+!-----------------------------------------------------------------------
+EXTERNAL layersnow
+
+!-----------------------------------------------------------------------
+! Store previous layer thicknesses.
+!-----------------------------------------------------------------------
+d0(:,0) = 0.0
+nold(:) = nsnow(:)
+DO k=1,tile_pts
+  i = tile_index(k)
+  IF ( nsnow(i) > 0 ) THEN
+    IF ( sice0(i) > 0.0 ) d0(i,0) = sice0(i) / rho0(i)
+  ELSE IF ( sice0(i) > 0.0 ) THEN
+!     In this case, SICE0 is the mass of the pack, so use RHO_SNOW_GRND.
+    d0(i,0) = sice0(i) / rho_snow_grnd(i)
+  END IF
+  d0(i,1:nsnow(i)) = ds(i,1:nsnow(i))
+END DO
+
+!-----------------------------------------------------------------------
+! Calculate snowdepth
+!-----------------------------------------------------------------------
+DO k=1,tile_pts
+  i = tile_index(k)
+  snowdepth(i) = d0(i,0)
+  DO n=1,nsnow(i)
+    snowdepth(i) = snowdepth(i) + d0(i,n)
+  END DO
+END DO
+
+!-----------------------------------------------------------------------
+! Divide snowpack into new layers
+!-----------------------------------------------------------------------
+! DEPENDS ON: layersnow
+CALL layersnow( nsmax,land_pts,tile_pts,tile_index,snowdepth,nsnow,&
+                ds,dzsnow )
+
+DO k=1,tile_pts
+  i = tile_index(k)
+
+  IF ( nsnow(i) > 0 ) THEN
+!-----------------------------------------------------------------------
+! Store previous snow layer energy and mass contents
+!-----------------------------------------------------------------------
+    csnow = sice0(i) * hcapi
+    e(0) = csnow * ( tsnow0(i) - tm )
+    IF (l_snow_albedo) r(0) = rgrain0(i)
+! If the previous timestep had no layers (but could still have snow),
+! estimate R(0) using average of previous grain size and that of
+! fresh snow.
+    IF ( nold(i) == 0 .AND.L_SNOW_ALBEDO)                         &
+      r(0) = ( 1.0-snowfall(i)/snowmass(i)) * rgrain(i) +         &
+                      snowfall(i)/snowmass(i) * rgrain0(i)
+    s(0) = sice0(i)
+    w(0) = 0.0
+    DO n=1,nold(i)
+      csnow = sice(i,n)*hcapi + sliq(i,n)*hcapw
+      e(n) = csnow * ( tsnow(i,n) - tm )
+      if (l_snow_albedo) r(n) = rgrainl(i,n)
+      s(n) = sice(i,n)
+      w(n) = sliq(i,n)
+    END DO
+
+!-----------------------------------------------------------------------
+! Initialise accumulations for new layer values.
+!-----------------------------------------------------------------------
+    u(:) = 0.
+    sice(i,:) = 0.
+    sliq(i,:) = 0.
+    if (l_snow_albedo) rgrainl(i,:) = 0.
+
+!-----------------------------------------------------------------------
+! Set the state of the new layers.
+!-----------------------------------------------------------------------
+!    Initialise with all new layers empty.
+    newremains(1:nsnow(i)) = ds(i,1:nsnow(i))
+!     Start by filling top new layer.
+    iznew = 1
+
+!     Loop over the old layers.
+    DO old=0,nold(i)
+
+!       All of this old layer remains to be reassigned to new layer(s).
+      oldremains = d0(i,old)
+
+!       Point to first new layer with remaining space.
+      izz = iznew
+
+!       Loop over new layers with remaining space.
+      DO new=izz,nsnow(i)
+
+        IF ( oldremains > newremains(new) ) THEN
+!-----------------------------------------------------------------------
+! The remaining depth in the new layer will be exhausted by some or
+! all of the remaining depth from the old layer.
+!-----------------------------------------------------------------------
+
+!           Decrement old layer by the remaining space in new layer.
+          oldremains = oldremains - newremains(new)
+
+!           Add properties from old layer to accumulation for new layer.
+!           Note that wt is <= 1 since here we have oldRemains>newRemains,
+!           and oldRemains <= d0.
+          IF ( d0(i,old) > thin_snow_limit ) THEN
+            wt =  newremains(new) / d0(i,old)
+            u(new) = u(new) + e(old) * wt
+            sice(i,new) = sice(i,new) + s(old) * wt
+            sliq(i,new) = sliq(i,new) + w(old) * wt
+            if (l_snow_albedo) rgrainl(i,new) = rgrainl(i,new) +     &
+                             r(old) * newremains(new)
+          END IF
+
+!           Update the pointer to the next new layer with space.
+          izz = new + 1
+
+        ELSE
+
+!-----------------------------------------------------------------------
+! The old layer will be exhausted by this increment.
+!-----------------------------------------------------------------------
+!           Decrement available space in the new layer.
+          newremains(new) = newremains(new) - oldremains
+!           Add properties from old layer to accumulation for new layer.
+          IF ( d0(i,old) > thin_snow_limit ) THEN
+            wt = oldremains /  d0(i,old)
+            u(new) = u(new) + e(old) * wt
+            sice(i,new) = sice(i,new) + s(old) * wt
+            sliq(i,new) = sliq(i,new) + w(old) * wt
+            if (l_snow_albedo) rgrainl(i,new) = rgrainl(i,new) + &
+                                                r(old) * oldremains
+          END IF
+!           Proceed to the next old layer by exiting from the new layer loop.
+          EXIT
+        END IF
+      END DO  !  new layers
+!       Update pointer to the next new layer with space.
+      iznew = izz
+    END DO  !  old layers
+
+!-----------------------------------------------------------------------
+! Diagnose layer temperatures and densities.
+!-----------------------------------------------------------------------
+    DO n=1,nsnow(i)
+      csnow = sice(i,n)*hcapi + sliq(i,n)*hcapw
+      tsnow(i,n) = tm + u(n) / csnow
+      rho_snow(i,n) = ( sice(i,n) + sliq(i,n) ) / ds(i,n)
+      if (l_snow_albedo) rgrainl(i,n) = rgrainl(i,n) / ds(i,n)
+    END DO
+
+!-----------------------------------------------------------------------
+! Snow surface grain size for radiative calculations
+!-----------------------------------------------------------------------
+    if (l_snow_albedo) rgrain(i) = rgrainl(i,1)
+
+!-----------------------------------------------------------------------
+! Diagnose bulk density of pack.
+!-----------------------------------------------------------------------
+    rho_snow_grnd(i) = snowmass(i) / snowdepth(i)
+
+  ELSE
+
+!-----------------------------------------------------------------------
+! Set bulk density of pack to a constant value if there is (effectively)
+! no snow. This density is then used the next time a shallow pack forms.
+! This is necessary if nsmax>0, but redundant if nsmax=0 (constant
+! density). We could also recalculate snowdepth, to make it consistent
+! with the revised density, but we're not bothering as depths are tiny!
+!-----------------------------------------------------------------------
+    IF ( snowmass(i) < 1.0e-9 ) rho_snow_grnd(i) = rho_snow_const
+
+  END IF   !  nsnow
+
+!-----------------------------------------------------------------------
+! Set values for unused snow layers.
+! Note: not needed for algorithm, but clearer to follow.
+!-----------------------------------------------------------------------
+  IF (  nsnow(i) < nsmax ) THEN
+    n = nsnow(i) + 1
+    if (l_snow_albedo) rgrainl(i,n:) = r0
+    rho_snow(i,n:) = 0.0
+    sice(i,n:) = 0.
+    sliq(i,n:) = 0.
+    tsnow(i,n:) = tm
+  END IF
+
+END DO  !  K (points)
+
+END SUBROUTINE relayersnow
+!!!!!#endif
+*/
+*/
+*/-----
+*DECK SNOW
+*/-----
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE SNOW-----------------------------------------------------
+
+! Description:
+!     Calling routine for snow module
+
+! Subroutine Interface:
+SUBROUTINE snow (nelev,nsmax,land_pts,timestep,stf_hf_snow_melt,ntiles,&
+                  tile_pts,tile_index,catch_snow,con_snow,tile_frac,  &
+                  ls_snow,tfall,hcaps,hcons,melt_tile,ei_tile,&
+                  smcl1,sthf1,surf_htf_tile,tsoil1,tice1,tstar_tile,&
+                  v_sat1,rgrain,rgrainl,rho_snow_grnd,sice,       &
+                  sliq,snow_grnd,snow_tile,snowdepth,             &
+                  tsnow,nsnow,ds,hf_snow_melt,lying_snow,         &
+                  rho_snow,snomlt_sub_htf,snow_soil_htf,snow_melt,&
+                  l_snow_albedo, dzsnow, refreezing_layer,        &
+                  refreezing_tile, refreezing )
+
+USE c_lheat, ONLY :                                               &
+!  imported scalar parameters
+ lf                 !  latent heat of fusion of water at 0degc
+
+
+USE snow_param, ONLY :                                            &
+ snow_hcon
+!!!! cansnowtile        !  switch for canopy snow model
+
+IMPLICIT NONE
+
+! Scalar arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ land_pts, &
+                      ! Total number of land points
+ nsmax,nelev
+
+REAL, INTENT(IN) ::                                               &
+ timestep      &
+        ! Timestep length (s)
+,dzsnow(nsmax)
+
+LOGICAL, INTENT(IN) ::                                            &
+ stf_hf_snow_melt  &
+                     ! Stash flag for snowmelt heat flux
+,l_snow_albedo
+
+! Array arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ ntiles                                                           &
+                       !  Number of land tiles
+,tile_pts(ntiles)                                                 &
+                       ! Number of tile points
+,tile_index(land_pts,ntiles)
+                       ! Index of tile points
+
+REAL, INTENT(IN) ::                                               &
+ catch_snow(land_pts,ntiles)                                      &
+                       ! canopy snow capacity (kg/m2)
+,con_snow(land_pts)                                               &
+                       ! Convective snowfall rate (kg/m2/s)
+,tile_frac(land_pts,ntiles)                                       &
+                       ! Tile fractions
+,tfall(land_pts,ntiles)  &
+,ls_snow(land_pts)                                                &
+                       ! Large-scale snowfall rate (kg/m2/s)
+,hcaps(land_pts)                                                  &
+                       ! Soil heat capacity of top layer(J/K/m3).
+,hcons(land_pts)                                                  &
+                       ! Thermal conductivity of top soil layer,
+!                            ! including water and ice (W/m/K)
+,smcl1(land_pts)                                                  &
+                       ! Moisture content of surface soil
+!                            ! layer (kg/m2)
+,sthf1(land_pts)                                                  &
+                       ! Frozen soil moisture content of
+!                            ! surface layer as a fraction of saturation.
+,surf_htf_tile(land_pts,ntiles)                                   &
+                       ! Surface heat flux (W/m2)
+,tstar_tile(land_pts,ntiles)                                      &
+                       ! Tile surface temperature (K)
+,v_sat1(land_pts)      ! Surface soil layer volumetric
+!                            ! moisture concentration at saturation
+
+! Array arguments with intent(inout)
+REAL, INTENT(INOUT) ::                                            &
+ ei_tile(land_pts,ntiles),                                        &
+ melt_tile(land_pts,ntiles)                                       &
+                       ! Surface or canopy snowmelt rate (kg/m2/s)
+                       ! On output, this is the total melt rate
+                       ! for the tile (i.e. sum of  melt on canopy
+                       ! and ground).
+,tsoil1(land_pts,nelev)                                        &
+,tice1(land_pts,nelev)                                          &
+                       ! Soil surface layer temperature (K)
+,rgrain(land_pts,ntiles)                                          &
+                       ! Snow surface grain size (microns)
+,rgrainl(land_pts,ntiles,nsmax)                                   &
+                       ! Snow layer grain size (microns)
+,rho_snow_grnd(land_pts,ntiles)                                   &
+                       ! Snowpack bulk density (kg/m3)
+,sice(land_pts,ntiles,nsmax)                                      &
+                       ! Ice content of snow layers (kg/m2)
+,sliq(land_pts,ntiles,nsmax)                                      &
+                       ! Liquid content of snow layers (kg/m2)
+,snow_grnd(land_pts,ntiles)                                       &
+                       ! Snow beneath canopy (kg/m2)
+,snow_tile(land_pts,ntiles)                                       &
+                       ! Snow mass (Kg/m2)
+,snowdepth(land_pts,ntiles)                                       &
+                       ! Snow depth (m)
+,tsnow(land_pts,ntiles,nsmax)
+                       ! Snow layer temperatures (K)
+
+! Array arguments with intent(out)
+INTEGER, INTENT(OUT) ::                                           &
+ nsnow(land_pts,ntiles)   ! Number of snow layers
+
+REAL, INTENT(OUT) ::                                              &
+ ds(land_pts,ntiles,nsmax)                                        &
+                          ! Snow layer thicknesses (m)
+,hf_snow_melt(land_pts)                                           &
+                          ! Gridbox snowmelt heat flux (W/m2)
+,lying_snow(land_pts)                                             &
+                          ! Gridbox snow mass (kg m-2)
+,rho_snow(land_pts,ntiles,nsmax)                                  &
+                          ! Snow layer densities (kg/m3)
+,snomlt_sub_htf(land_pts)                                         &
+                          ! Sub-canopy snowmelt heat flux (W/m2)
+,snow_melt(land_pts)                                              &
+                          ! Gridbox snowmelt (Kg/m2/s)
+,refreezing_layer(land_pts,ntiles,nsmax)                          &
+,refreezing_tile(land_pts,ntiles)                                 &
+,refreezing(land_pts)
+
+! Local scalars
+INTEGER ::                                                        &
+ i                                                                &
+                      ! land point index and loop counter
+,j                                                                &
+                      ! tile pts loop counter
+,k                                                                &
+                      ! tile number
+,n                    ! tile loop counter
+
+! Local arrays
+REAL ::                                                           &
+ tstile(land_pts)                                                 &
+,csnow(land_pts,nsmax)                                            &
+                      ! Areal heat capacity of layers (J/K/m2)
+,ksnow(land_pts,nsmax)                                            &
+                      ! Thermal conductivity of layers (W/m/K)
+,rho0(land_pts)                                                   &
+                      ! Density of fresh snow (kg/m3)
+,hcons_l(land_pts)                                                &
+,snowfall(land_pts)                                               &
+                      ! Snowfall reaching the ground in timestep
+                      ! (kg/m2) - includes any canopy unloading
+,snowmass(land_pts)                                               &
+                      ! Snow mass on the ground (Kg/m2)
+,rgrain0(land_pts)                                                &
+                      ! Fresh snow grain size (microns)
+,sice0(land_pts)                                                  &
+                      ! Ice content of fresh snow (kg/m2)
+!                           ! Where NSNOW=0, SICE0 is the mass of
+!                           ! the snowpack.
+,snow_can(land_pts,ntiles)                                        &
+                      ! Canopy snow load (Kg/m2)
+,snow_soil_htf(land_pts,ntiles)                                   &
+                      ! Heat flux into the uppermost
+!                           ! subsurface layer (W/m2)
+!                           ! i.e. snow to ground, or into
+!                           ! snow/soil composite layer
+,tsnow0(land_pts)     ! Temperature of fresh snow (K)
+
+LOGICAL ::  cansnowtile(ntiles)
+
+!-----------------------------------------------------------------------
+! External routines called:
+!-----------------------------------------------------------------------
+EXTERNAL canopysnow,layersnow,relayersnow,snowtherm,snowpack,     &
+         snowgrain,compactsnow
+!
+cansnowtile(:) = .FALSE.
+!
+!-----------------------------------------------------------------------
+! Initialise gridbox variables.
+!-----------------------------------------------------------------------
+lying_snow(:) = 0.0
+snomlt_sub_htf(:) = 0.0
+snow_melt(:) = 0.0
+refreezing(:) = 0.0
+refreezing_tile(:,:) = 0.0
+refreezing_layer(:,:,:) = 0.0
+
+DO n=1,ntiles
+if (n .gt. (ntiles-nelev)) then
+   hcons_l(:)=0.24
+else
+   hcons_l(:)=hcons(:)
+end if
+!-----------------------------------------------------------------------
+! Set snow mass variables
+!-----------------------------------------------------------------------
+
+  IF ( cansnowtile(n) ) THEN
+!-----------------------------------------------------------------------
+!         With the canopy snow model, snow_tile is held on the canopy,
+!         while the mass of the snowpack (on the ground) is snow_grnd.
+!-----------------------------------------------------------------------
+    DO k=1,tile_pts(n)
+      i = tile_index(k,n)
+      snow_can(i,n) = snow_tile(i,n)
+      snowmass(i) = snow_grnd(i,n)
+
+!-----------------------------------------------------------------------
+! Subtract sublimation and melt of canopy snow.
+!-----------------------------------------------------------------------
+      snow_can(i,n) = snow_can(i,n) -                             &
+                     ( melt_tile(i,n)+ei_tile(i,n) ) * timestep
+    END DO
+
+  ELSE
+    snowmass(:)=0.0
+!-----------------------------------------------------------------------
+! Without the snow canopy model, all the snow is in the snowpack
+!-----------------------------------------------------------------------
+    DO k=1,tile_pts(n)
+      i = tile_index(k,n)
+      snowmass(i) = snow_tile(i,n)
+    END DO
+
+  END IF
+
+!-----------------------------------------------------------------------
+! Canopy interception, throughfall and unloading of snow
+!-----------------------------------------------------------------------
+! DEPENDS ON: canopysnow
+  CALL canopysnow ( land_pts,tile_pts(n),timestep,cansnowtile(n), &
+                    tile_index(:,n),catch_snow(:,n),con_snow,     &
+                    ls_snow,melt_tile(:,n),snow_can(:,n),         &
+                    snowfall )
+
+!-----------------------------------------------------------------------
+! Divide snow pack into layers
+!-----------------------------------------------------------------------
+! DEPENDS ON: layersnow
+  CALL layersnow ( nsmax,land_pts,tile_pts(n),tile_index(:,n),    &
+                   snowdepth(:,n),nsnow(:,n),ds(:,n,:),dzsnow )
+
+!-----------------------------------------------------------------------
+! Thermal properties of snow layers
+!-----------------------------------------------------------------------
+  IF ( nsmax > 0 )                                                &
+! DEPENDS ON: snowtherm
+    CALL snowtherm ( nsmax,land_pts,tile_pts(n),nsnow(:,n),       &
+                     tile_index(:,n),ds(:,n,:),sice(:,n,:),       &
+                     sliq(:,n,:),csnow,ksnow )
+
+!-----------------------------------------------------------------------
+! Snow thermodynamics and hydrology
+!-----------------------------------------------------------------------
+! DEPENDS ON: snowpack
+! LOAD APPROPRIATELY LAPSED SUB-SURFACE TEMPERATURE
+  k=mod(n-1,nelev)+1
+  if (n.le.(ntiles-nelev)) then
+    tstile(:)=tsoil1(:,k)
+  else
+    tstile(:)=tice1(:,k)
+  endif
+  CALL snowpack ( nsmax,land_pts,tile_pts(n),timestep,&
+                  cansnowtile(n),   &
+                  nsnow(:,n),tile_index(:,n),csnow,               &
+                  hcaps,hcons_l,ksnow,rho_snow_grnd(:,n),smcl1,     &
+                  snowfall,sthf1,surf_htf_tile(:,n),              &
+                  tile_frac(:,n),v_sat1,ds(:,n,:),melt_tile(:,n), &
+                  ei_tile(:,n),tfall, &
+                  sice(:,n,:),sliq(:,n,:),snomlt_sub_htf,         &
+                  snowdepth(:,n),snowmass,tsnow(:,n,:),           &
+                  tstile,snow_soil_htf(:,n),rho_snow(:,n,:),      &
+                  rho0,sice0,tsnow0, refreezing_layer(:,n,:),     &
+                  refreezing_tile(:,n) )
+!  if (n.le.(ntiles-nelev)) then
+!    tsoil1(:)=tstile(:)
+!  else
+!    tice1(:)=tstile(:)
+!  endif
+
+!-----------------------------------------------------------------------
+! Growth of snow grains
+!-----------------------------------------------------------------------
+  IF ( l_snow_albedo )                                            &
+! DEPENDS ON: snowgrain
+    CALL snowgrain ( nsmax,land_pts,tile_pts(n),timestep,&
+                     nsnow(:,n),    &
+                     tile_index(:,n),sice(:,n,:),snowfall,        &
+                     snowmass,tsnow(:,n,:),tstar_tile(:,n),       &
+                     rgrain(:,n),rgrainl(:,n,:),rgrain0 )
+
+  IF ( nsmax > 0 ) THEN
+!-----------------------------------------------------------------------
+! Mechanical compaction of snow
+!-----------------------------------------------------------------------
+! DEPENDS ON: compactsnow
+    CALL compactsnow ( nsmax,land_pts,tile_pts(n),timestep,&
+                       nsnow(:,n),  &
+                       tile_index(:,n),sice(:,n,:),sliq(:,n,:),   &
+                       tsnow(:,n,:),rho_snow(:,n,:),ds(:,n,:) )
+
+!-----------------------------------------------------------------------
+! Redivide snowpack after changes in depth, conserving mass and energy
+!-----------------------------------------------------------------------
+! DEPENDS ON: relayersnow
+    CALL relayersnow ( nsmax,land_pts,tile_pts(n),tile_index(:,n),&
+                       rgrain0,rho0,sice0,snowfall,               &
+                       snowmass,tsnow0,nsnow(:,n),ds(:,n,:),      &
+                       rgrain(:,n),rgrainl(:,n,:),sice(:,n,:),    &
+                       rho_snow_grnd(:,n),sliq(:,n,:),            &
+                       tsnow(:,n,:),rho_snow(:,n,:),              &
+                       snowdepth(:,n), l_snow_albedo, dzsnow )
+  END IF  !  NSMAX>0
+
+!-----------------------------------------------------------------------
+! Copy into final snow mass variables
+!-----------------------------------------------------------------------
+  IF ( cansnowtile(n) ) THEN
+    DO k=1,tile_pts(n)
+      i = tile_index(k,n)
+      snow_grnd(i,n) = snowmass(i)
+      snow_tile(i,n) = snow_can(i,n)
+    END DO
+  ELSE
+    DO k=1,tile_pts(n)
+      i = tile_index(k,n)
+      snow_tile(i,n) = snowmass(i)
+    END DO
+  END IF
+
+!-----------------------------------------------------------------------
+! Increment gridbox lying snow and snow melt.
+!-----------------------------------------------------------------------
+  DO k=1,tile_pts(n)
+    i = tile_index(k,n)
+    lying_snow(i) = lying_snow(i) +                               &
+                       tile_frac(i,n) * snow_tile(i,n)
+!     Add snow beneath canopy.
+    IF ( cansnowtile(n) )                                         &
+      lying_snow(i) = lying_snow(i) +                             &
+                         tile_frac(i,n) * snow_grnd(i,n)
+
+!     Snow melt.
+    snow_melt(i) = snow_melt(i) + tile_frac(i,n) * melt_tile(i,n)
+    refreezing(i) = refreezing(i) + tile_frac(i,n)                &
+                                       * refreezing_tile(i,n)
+  END DO
+
+END DO  !  tiles
+
+!-----------------------------------------------------------------------
+! Calculate the total snowmelt heat flux.
+!-----------------------------------------------------------------------
+IF ( stf_hf_snow_melt ) THEN
+  DO i=1,land_pts
+    hf_snow_melt(i) = lf * snow_melt(i)
+  END DO
+END IF
+
+END SUBROUTINE snow
+!!!!!#endif
+*/
+*/
+*/-----
+*DECK SNOWGRAIN
+*/-----
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE SNOWGRAIN------------------------------------------------
+
+! Description:
+!     Calculate growth of snow grains.
+
+! Subroutine Interface:
+SUBROUTINE snowgrain ( nsmax,land_pts,tile_pts,timestep,nsnow,   &
+                       tile_index,sice,snowfall,snowmass,tsnow,  &
+                       tstar_tile,rgrain,rgrainl,rgrain0 )
+
+
+USE c_0_dg_c, ONLY :                                              &
+!  imported scalar parameters
+ tm           ! Temperature at which fresh water freezes
+!                   ! and ice melts (K)
+
+USE c_pi, ONLY :                                                  &
+!  imported scalar parameters
+ pi
+
+USE rad_param, ONLY :                                             &
+!  imported scalars with intent(in)
+ r0                                                               &
+              !  Grain size for fresh snow (microns)
+,rmax                                                             &
+              !  Maximum snow grain size (microns)
+!  imported arrays with intent(in)
+,snow_ggr     !  snow grain area growth rates (microns**2 s-1).
+
+
+IMPLICIT NONE
+
+! Scalar arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ land_pts                                                         &
+                  ! Total number of land points
+ ,nsmax           &
+                  ! Maximum possible number of snow layers
+,tile_pts         ! Number of tile points
+
+REAL, INTENT(IN) ::                                               &
+ timestep         ! Timestep (s)
+
+! Array arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ nsnow(land_pts)                                                  &
+                  ! Number of snow layers
+,tile_index(land_pts)
+                  ! Index of tile points
+
+REAL, INTENT(IN) ::                                               &
+ sice(land_pts,nsmax)                                             &
+                  ! Ice content of snow layers (kg/m2)
+,snowfall(land_pts)                                               &
+                  ! snowfall rate (kg m-2 s-1)
+,snowmass(land_pts)                                               &
+                  ! Snow mass on ground on tile (kg m-2)
+,tsnow(land_pts,nsmax)                                            &
+                  ! Snow layer temperatures (K)
+,tstar_tile(land_pts)
+                  ! Tile surface temperature (K)
+
+! Array arguments with intent(inout)
+REAL, INTENT(INOUT) ::                                            &
+ rgrain(land_pts)                                                 &
+                  ! Snow grain size (microns)
+,rgrainl(land_pts,nsmax)
+                  ! Snow grain size in snow layers (microns)
+
+! Array arguments with intent(out)
+REAL, INTENT(OUT) ::                                              &
+ rgrain0(land_pts)
+                  ! Fresh snow grain size (microns)
+
+! Local scalars.
+INTEGER ::                                                        &
+ i                                                                &
+                  ! Land point index
+,k                                                                &
+                  ! Tile point index
+,n                ! Snow layer index
+
+REAL :: rate      ! Grain area growth rate (microns2/s)
+
+!-----------------------------------------------------------------------
+
+DO k=1,tile_pts
+  i = tile_index(k)
+!-----------------------------------------------------------------------
+! Set grain size for fresh snow.
+!-----------------------------------------------------------------------
+  rgrain0(i) = r0
+
+  IF ( nsnow(i) == 0 ) THEN
+!-----------------------------------------------------------------------
+! No snow, or zero-layer model selected.
+!-----------------------------------------------------------------------
+    IF ( snowmass(i) > 0.0 ) THEN
+      rate = snow_ggr(1)
+      IF ( tstar_tile(i) < tm ) THEN
+        IF ( rgrain(i) < 150. ) THEN
+          rate = snow_ggr(2)
+        ELSE
+          rate = snow_ggr(3) *                                    &
+                    EXP( -3.7e4 / (8.13451 * tstar_tile(i)) )
+        END IF
+      END IF
+      rgrain(i) = SQRT( rgrain(i)**2 + (rate / pi) * timestep )   &
+                    - (rgrain(i) - r0) * snowfall(i)/2.5
+      rgrain(i) = MIN( rmax, rgrain(i) )
+      rgrain(i) = MAX( r0, rgrain(i) )
+    ELSE
+! No snow. Set grain size to that for fresh snow (ready for next occurence).
+      rgrain(i) = r0
+    END IF  !  SNOWMASS
+
+  ELSE
+
+!-----------------------------------------------------------------------
+!     NSNOW>0: one or more snow layers.
+!-----------------------------------------------------------------------
+    DO n=1,nsnow(i)
+      IF ( sice(i,n) > 0 ) THEN
+        rate = snow_ggr(1)
+        IF ( tsnow(i,n) < tm ) THEN
+          IF ( rgrainl(i,n) < 150.0 ) THEN
+            rate = snow_ggr(2)
+          ELSE
+            rate = snow_ggr(3) *                                  &
+                      EXP( -3.7e4 / (8.131451 * tsnow(i,n)) )
+          END IF
+        END IF
+        rgrainl(i,n) = SQRT(rgrainl(i,n)**2 + (rate/pi)*timestep)
+        rgrainl(i,n) = MIN( rmax, rgrainl(i,n) )
+        rgrainl(i,n) = MAX( r0, rgrainl(i,n) )
+      END IF
+    END DO
+
+!-----------------------------------------------------------------------
+! For all currently empty layers, set grain size to that for fresh snow.
+!-----------------------------------------------------------------------
+    IF ( nsnow(i) < nsmax )                                       &
+      rgrainl(i,nsnow(i)+1:) = rgrain0(i)
+
+  END IF  !  NSNOW
+
+END DO  !  k (tile points)
+
+END SUBROUTINE snowgrain
+!!!!!#endif
+*/
+*/
+*/-----
+*DECK SNOWPACK
+*/-----
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE SNOWPACK-------------------------------------------------
+
+! Description:
+!     Snow thermodynamics and hydrology
+
+! Subroutine Interface:
+SUBROUTINE snowpack ( nsmax,land_pts,tile_pts,timestep,cansnowtile,&
+                      nsnow,tile_index,csnow,hcaps,hcons, &
+                      ksnow,rho_snow_grnd,smcl1,snowfall,sthf1,   &
+                      surf_htf_tile,tile_frac,v_sat1,ds,          &
+                      melt_tile,ei_tile,tfall,sice,sliq,snomlt_sub_htf,&
+                      snowdepth,snowmass,tsnow,tsoil1,            &
+                      snow_soil_htf,rho_snow,rho0,sice0,tsnow0,   &
+                      refreezing_layer, refreezing_tile )
+
+USE c_0_dg_c, ONLY :                                              &
+!  imported scalar parameters
+ tm              ! Temperature at which fresh water freezes
+!                      ! and ice melts (K)
+
+USE c_densty, ONLY :                                              &
+!  imported scalar parameters
+ rho_water       ! density of pure water (kg/m3)
+
+USE c_lheat , ONLY :                                              &
+!  imported scalar parameters
+ lc                                                               &
+                 ! latent heat of condensation of water
+!                      ! at 0degC (J kg-1)
+,lf              !  latent heat of fusion at 0degC (J kg-1)
+
+USE c_perma, ONLY :                                               &
+!  imported scalar parameters
+ hcapi                                                            &
+                 !  Specific heat capacity of ice (J/kg/K)
+,hcapw           !  Specific heat capacity of water (J/kg/K)
+
+USE soil_param, ONLY :                                            &
+!  imported arrays with intent(in)
+ dzsoil          !  Thicknesses of the soil layers (m)
+
+
+USE snow_param, ONLY :                                            &
+ rho_snow_const                                                   &
+                 !   constant density of lying snow (kg per m**3)
+,snowliqcap      !   Liquid water holding capacity of lying snow
+!                          as a fraction of snow mass.
+
+IMPLICIT NONE
+
+! Scalar parameters
+REAL, PARAMETER :: GAMMA = 0.5
+                 ! Implicit timestep weighting
+
+! Scalar arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ land_pts                                                         &
+                 ! Total number of land points
+ ,nsmax          &
+                 ! Maximum possible number of snow layers
+,tile_pts        ! Number of tile points
+
+REAL, INTENT(IN) ::                                               &
+ timestep        ! Timestep (s)
+
+LOGICAL, INTENT(IN) ::                                            &
+ cansnowtile     ! Switch for canopy snow model
+
+! Array arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ nsnow(land_pts)                                                  &
+                 ! Number of snow layers
+,tile_index(land_pts)
+                 ! Index of tile points
+
+REAL, INTENT(IN) ::                                               &
+ csnow(land_pts,nsmax)                                            &
+                 ! Areal heat capacity of layers (J/K/m2)
+,hcaps(land_pts)                                                  &
+                 ! Heat capacity of soil surface layer (J/K/m3)
+,hcons(land_pts)                                                  &
+                 ! Thermal conductivity of top soil layer,
+!                      ! including water and ice (W/m/K)
+,ksnow(land_pts,nsmax)                                            &
+                 ! Thermal conductivity of layers (W/m/K)
+,rho_snow_grnd(land_pts)                                          &
+                 ! Snowpack bulk density (kg/m3)
+,smcl1(land_pts)                                                  &
+                 ! Moisture content of surface soil layer (kg/m2)
+,snowfall(land_pts)                                               &
+                 ! Snow reaching the ground (kg/m2)
+,sthf1(land_pts)                                                  &
+                 ! Frozen soil moisture content of surface layer
+!                      ! as a fraction of saturation.
+,surf_htf_tile(land_pts)                                          &
+                 ! Snow surface heat flux (W/m2)
+,tile_frac(land_pts)                                              &
+                 ! Tile fractions
+,v_sat1(land_pts)
+                 ! Surface soil layer volumetric
+!                      ! moisture concentration at saturation
+
+! Array arguments with intent(inout)
+REAL, INTENT(INOUT) ::                                            &
+ ds(land_pts,nsmax)                                               &
+                 ! Snow layer depths (m)
+,ei_tile(land_pts)                                              &
+,melt_tile(land_pts)                                              &
+                 ! Surface snowmelt rate (kg/m2/s)
+,sice(land_pts,nsmax)                                             &
+                 ! Ice content of snow layers (kg/m2)
+,sliq(land_pts,nsmax)                                             &
+                 ! Liquid content of snow layers (kg/m2)
+,snomlt_sub_htf(land_pts)                                         &
+                 ! Sub-canopy snowmelt heat flux (W/m2)
+,snowdepth(land_pts)                                              &
+                 ! Snow depth (m)
+,snowmass(land_pts)                                               &
+                 ! Snow mass on the ground (kg/m2)
+,tsnow(land_pts,nsmax)                                            &
+                 ! Snow layer temperatures (K)
+,tsoil1(land_pts) &
+,tfall(land_pts)
+                 ! Soil surface layer temperature(K)
+
+! Array arguments with intent(out)
+REAL, INTENT(OUT) ::                                              &
+ snow_soil_htf(land_pts)                                          &
+                 ! Heat flux into the uppermost subsurface layer
+!                      !        (W/m2)
+!                      ! i.e. snow to ground, or into snow/soil
+!                      !      composite layer
+,rho_snow(land_pts,nsmax)                                         &
+                 ! Density of snow layers (kg/m3)
+,rho0(land_pts)                                                   &
+                 ! Density of fresh snow (kg/m3)
+,sice0(land_pts)                                                  &
+                 ! Ice content of fresh snow (kg/m2)
+!                      ! Where NSNOW=0, SICE0 is the mass of
+!                      ! the snowpack.
+,tsnow0(land_pts) &
+                 ! Temperature of fresh snow (K)
+,refreezing_layer(land_pts,nsmax)                                 &
+,refreezing_tile(land_pts)
+
+! Local scalars
+INTEGER ::                                                        &
+ i                                                                &
+                 ! land point index
+,k                                                                &
+                 ! Tile point index
+,n               ! Snow layer index
+
+REAL ::                                                           &
+ asoil                                                            &
+                 ! 1 / (dz*hcap) for surface soil layer
+,can_melt                                                         &
+                 ! Melt of snow on the canopy (kg/m2/s)
+,coldsnow                                                         &
+                 ! layer cold content (J/m2)
+,dsice                                                            &
+                 ! Change in layer ice content (kg/m2)
+,g_snow_surf                                                      &
+                 ! Heat flux at the snow surface (W/m2)
+,sliqmax                                                          &
+                 ! Maximum liquid content for layer (kg/m2)
+,submelt                                                          &
+                 ! Melt of snow beneath canopy (kg/m2/s)
+,smclf                                                            &
+                 ! Frozen soil moisture content of
+!                      ! surface layer (kg/m2)
+,win &
+                     ! Water entering layer (kg/m2)
+,roff            ! Runoff from ice layers
+
+! Local arrays
+REAL ::                                                           &
+ asnow(nsmax)                                                     &
+                 ! Effective thermal conductivity (W/m2/k)
+,a(nsmax)                                                         &
+                 ! Below-diagonal matrix elements
+,b(nsmax)                                                         &
+                 ! Diagonal matrix elements
+,c(nsmax)                                                         &
+                 ! Above-diagonal matrix elements
+,dt(nsmax)                                                        &
+                 ! Temperature increments (k)
+,r(nsmax)        ! Matrix equation rhs
+
+!-----------------------------------------------------------------------
+! External routines called:
+!-----------------------------------------------------------------------
+EXTERNAL tridag
+
+
+!-----------------------------------------------------------------------
+! Initialisation
+!-----------------------------------------------------------------------
+refreezing_layer(:,:) = 0.0
+refreezing_tile(:) = 0.0
+!-----------------------------------------------------------------------
+
+
+DO k=1,tile_pts
+  i = tile_index(k)
+
+  g_snow_surf = surf_htf_tile(i)
+!-----------------------------------------------------------------------
+! Add melt to snow surface heat flux, unless using the snow canopy model
+!-----------------------------------------------------------------------
+  IF ( .NOT. cansnowtile )                                        &
+    g_snow_surf = g_snow_surf + lf*melt_tile(i)
+
+  IF ( nsnow(i) == 0 ) THEN
+
+! Add snowfall (including canopy unloading) to ground snowpack.
+    snowmass(i) = snowmass(i) + snowfall(i)
+
+    IF ( .NOT. cansnowtile ) THEN
+!-----------------------------------------------------------------------
+! Remove sublimation and melt from snowpack.
+!-----------------------------------------------------------------------
+      snowmass(i) = snowmass(i) -                                 &
+                        ( melt_tile(i)+ei_tile(i) ) * timestep
+!!      melt_tile(i)=melt_tile(i)+tfall(i)
+
+    ELSE IF ( tsoil1(i) > tm ) THEN
+!-----------------------------------------------------------------------
+! For canopy model, calculate melt of snow on ground underneath canopy.
+!-----------------------------------------------------------------------
+      smclf = rho_water * dzsoil(1) * v_sat1(i) * sthf1(i)
+      asoil = 1./ ( dzsoil(1) * hcaps(i) +                        &
+                      hcapw * (smcl1(i) - smclf) + hcapi*smclf )
+      submelt = MIN( snowmass(i) / timestep,                      &
+                     (tsoil1(i) - tm) / (lf * asoil * timestep) )
+      snowmass(i) = snowmass(i) - submelt * timestep
+      tsoil1(i) = tsoil1(i) -                                     &
+                   tile_frac(i) * asoil * timestep * lf * submelt
+      melt_tile(i) = melt_tile(i) + submelt
+      snomlt_sub_htf(i) = snomlt_sub_htf(i) +                     &
+                             tile_frac(i) * lf * submelt
+
+    END IF
+
+! Set flux into uppermost snow/soil layer (after melting).
+    snow_soil_htf(i) = surf_htf_tile(i)
+
+! Diagnose snow depth.
+    snowdepth(i) = snowmass(i) / rho_snow_grnd(i)
+
+    rho0(i) = rho_snow_const
+    sice0(i) = snowmass(i)
+    tsnow0(i) = MIN( tsoil1(i), tm )
+
+  ELSE
+
+!-----------------------------------------------------------------------
+! There is at least one snow layer. Calculate heat conduction between
+!   layers and temperature increments.
+!-----------------------------------------------------------------------
+
+! Save rate of melting of snow on the canopy.
+    IF ( cansnowtile ) THEN
+      can_melt = melt_tile(i)
+    ELSE
+      can_melt = 0.0
+!remove sublimation (LC+LF) used to calculate flux, so needs to come from
+!ice mass. WHAT IF YOU SUBLIMATE THE WHOLE TOP LAYER? Unlikely...
+      dsice=ei_tile(i)*timestep
+      IF ( dsice > sice(i,1) ) dsice = sice(i,n)
+      ds(i,1) = ( 1.0 - dsice/sice(i,1) ) * ds(i,1)
+      sice(i,1) = sice(i,1) -  dsice
+    END IF
+!!add in rain (sieved by canopy) to surface liquid for deep snow
+!!    sliq(i,1) = sliq(i,1) +  tfall(i)*timestep
+
+    IF ( nsnow(i) == 1 ) THEN
+
+! Single layer of snow.
+      asnow(1) = 2.0 /                                            &
+                 ( snowdepth(i)/ksnow(i,1) + dzsoil(1)/hcons(i) )
+      snow_soil_htf(i) = asnow(1) * ( tsnow(i,1) - tsoil1(i) )
+      dt(1) = ( g_snow_surf - snow_soil_htf(i) ) * timestep /     &
+                     ( csnow(i,1) + GAMMA * asnow(1) * timestep )
+      snow_soil_htf(i) = asnow(1) *                                 &
+                         ( tsnow(i,1) + GAMMA*dt(1) - tsoil1(i) )
+      tsnow(i,1) = tsnow(i,1) + dt(1)
+
+    ELSE
+
+! Multiple snow layers.
+      DO n=1,nsnow(i)-1
+        asnow(n) = 2.0 /                                          &
+                   ( ds(i,n)/ksnow(i,n) + ds(i,n+1)/ksnow(i,n+1) )
+      END DO
+      n = nsnow(i)
+      asnow(n) = 2.0 / ( ds(i,n)/ksnow(i,n) + dzsoil(1)/hcons(i) )
+      a(1) = 0.
+      b(1) = csnow(i,1) + GAMMA*asnow(1)*timestep
+      c(1) = -GAMMA * asnow(1) * timestep
+      r(1) = ( g_snow_surf - asnow(1)*(tsnow(i,1)-tsnow(i,2)) )   &
+                                                      * timestep
+      DO n=2,nsnow(i)-1
+        a(n) = -GAMMA * asnow(n-1) * timestep
+        b(n) = csnow(i,n) + GAMMA * ( asnow(n-1) + asnow(n) )     &
+                                                       * timestep
+        c(n) = -GAMMA * asnow(n) * timestep
+        r(n) = asnow(n-1)*(tsnow(i,n-1) - tsnow(i,n) ) * timestep &
+               +  asnow(n)*(tsnow(i,n+1) - tsnow(i,n)) * timestep
+      END DO
+      n = nsnow(i)
+      a(n) = -GAMMA * asnow(n-1) * timestep
+      b(n) = csnow(i,n) + GAMMA * (asnow(n-1)+asnow(n)) * timestep
+      c(n) = 0.
+      r(n) = asnow(n-1)*( tsnow(i,n-1) - tsnow(i,n) ) * timestep  &
+              + asnow(n) * ( tsoil1(i) - tsnow(i,n) ) * timestep
+
+!-----------------------------------------------------------------------
+! Call the tridiagonal solver.
+!-----------------------------------------------------------------------
+! DEPENDS ON: tridag
+      CALL tridag( nsnow(i),nsmax,a,b,c,r,dt )
+
+      n = nsnow(i)
+      snow_soil_htf(i) = asnow(n) *                               &
+                         ( tsnow(i,n) + GAMMA*dt(n) - tsoil1(i) )
+      DO n=1,nsnow(i)
+        tsnow(i,n) = tsnow(i,n) + dt(n)
+      END DO
+    END IF  !  NSNOW
+
+!-----------------------------------------------------------------------
+! Melt snow in layers with temperature exceeding melting point
+!-----------------------------------------------------------------------
+    DO n=1,nsnow(i)
+      coldsnow = csnow(i,n)*(tm - tsnow(i,n))
+      IF ( coldsnow < 0 ) THEN
+        tsnow(i,n) = tm
+        dsice = -coldsnow / lf
+        IF ( dsice > sice(i,n) ) dsice = sice(i,n)
+        ds(i,n) = ( 1.0 - dsice/sice(i,n) ) * ds(i,n)
+        sice(i,n) = sice(i,n) - dsice
+        sliq(i,n) = sliq(i,n) + dsice
+      END IF
+    END DO
+! Melt still > 0? - no snow left
+
+
+
+!-----------------------------------------------------------------------
+! Move liquid water in excess of holding capacity downwards or refreeze.
+!-----------------------------------------------------------------------
+    win = 0.0
+    roff = 0.0
+    DO n=1,nsnow(i)
+      sliq(i,n) = sliq(i,n) + win
+      win = 0.0
+      sliqmax = snowliqcap * rho_water * ds(i,n)
+      rho_snow(i,n) = (sice(i,n) + sliq(i,n) + win) / ds(i,n)
+
+
+      IF(rho_snow(i,n) >= 850.0) THEN
+        sliqmax = 0.0
+      ELSE IF((rho_snow(i,n) >= 450.0) .AND. &
+              (rho_snow(i,n) < 850.0)) THEN
+        sliqmax = sliqmax * (850.0 - rho_snow(i,n)) / 400.0
+      ENDIF
+
+
+      IF (sliq(i,n) > sliqmax) THEN
+! Liquid capacity exceeded
+        win = sliq(i,n) - sliqmax
+        sliq(i,n) = sliqmax
+      END IF
+
+      IF(rho_snow(i,n) >= 850.0) THEN
+        roff = win + roff
+        win = 0.0
+      ELSE IF((rho_snow(i,n) >= 450.0) .AND. &
+              (rho_snow(i,n) < 850.0)) THEN
+        roff = (win * (rho_snow(i,n) - 450.0) / 400.0) + roff
+        win = win * (850.0 - rho_snow(i,n)) / 400.0
+      ENDIF
+
+      coldsnow = csnow(i,n)*(tm - tsnow(i,n))
+      IF (coldsnow > 0) THEN
+! Liquid can freeze
+        dsice = MIN(sliq(i,n), coldsnow / lf)
+        sliq(i,n) = sliq(i,n) - dsice
+        sice(i,n) = sice(i,n) + dsice
+        tsnow(i,n) = tsnow(i,n) + lf*dsice/csnow(i,n)
+        refreezing_layer(i,n) = dsice / timestep
+        refreezing_tile(i) = refreezing_tile(i)   &
+                                   + (dsice / timestep)
+      END IF
+    END DO
+
+!-----------------------------------------------------------------------
+! The remaining liquid water flux is melt.
+! Include any separate canopy melt in this diagnostic.
+!-----------------------------------------------------------------------
+    melt_tile(i) = ( (win+roff) / timestep ) + can_melt
+
+!-----------------------------------------------------------------------
+! Diagnose layer densities
+!-----------------------------------------------------------------------
+    DO n=1,nsnow(i)
+      rho_snow(i,n) = 0.
+      IF ( ds(i,n) > EPSILON(ds) )                                &
+        rho_snow(i,n) = (sice(i,n) + sliq(i,n)) / ds(i,n)
+    END DO
+
+!-----------------------------------------------------------------------
+! Add snowfall and frost as layer 0.
+!-----------------------------------------------------------------------
+    sice0(i) = snowfall(i)
+    tsnow0(i) = tsnow(i,1)
+    rho0(i) = rho_snow_const
+
+!-----------------------------------------------------------------------
+! Diagnose total snow depth and mass
+!-----------------------------------------------------------------------
+    snowdepth(i) = sice0(i) / rho0(i)
+    snowmass(i) = sice0(i)
+    DO n=1,nsnow(i)
+      snowdepth(i) = snowdepth(i) + ds(i,n)
+      snowmass(i) = snowmass(i) + sice(i,n) + sliq(i,n)
+    END DO
+
+  END IF    !  NSNOW
+
+END DO  !  k (points)
+
+END SUBROUTINE snowpack
+!!!!!#endif
+*/
+*/
+*/-----
+*DECK SNOWTHERM
+*/-----
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE SNOWTHERM------------------------------------------------
+
+! Description:
+!     Thermal properties of snow layers
+
+! Subroutine Interface:
+SUBROUTINE snowtherm ( nsmax,land_pts,tile_pts,nsnow,tile_index,ds,&
+                       sice,sliq,csnow,ksnow )
+
+
+USE c_perma, ONLY :                                               &
+!  imported scalar parameters
+ hcapi                                                            &
+              ! Specific heat capacity of ice (J/kg/K)
+,hcapw        ! Specific heat capacity of water (J/kg/K)
+
+USE c_rhowat, ONLY :                                              &
+!  imported scalar parameters
+ rho_water    ! density of water (kg/m3)
+
+
+IMPLICIT NONE
+
+! Scalar arguments with intent(in)
+INTEGER,INTENT(IN) ::                                             &
+ land_pts                                                         &
+                     !  Number of land points
+ ,nsmax        &
+                     !  Maximum number of snow layers
+,tile_pts            !  Number of tile points
+
+! Array arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ nsnow(land_pts)                                                  &
+                         !  Number of snow layers
+,tile_index(land_pts)    !  Index of tile points
+
+REAL, INTENT(IN) ::                                               &
+ ds(land_pts,nsmax)                                               &
+                         !  Snow layer thicknesses (m)
+,sice(land_pts,nsmax)                                             &
+                         !  Ice content of snow layers (kg/m2)
+,sliq(land_pts,nsmax)    !  Liquid content of snow layers (kg/m2)
+
+! Array arguments with intent(out)
+REAL, INTENT(OUT) ::                                              &
+ csnow(land_pts,nsmax)                                            &
+                         !  Areal heat capacity of layers (J/K/m2)
+,ksnow(land_pts,nsmax)   !  Thermal conductivity of layers (W/m/K)
+
+! Local scalars
+INTEGER ::                                                        &
+ k                                                                &
+                     !  Tile point index
+,l                                                                &
+                     !  Land point index
+,n                   !  Snow layer index
+
+REAL :: rho_snow     !  Snow layer density (kg/m3)
+
+!-----------------------------------------------------------------------
+
+DO k=1,tile_pts
+  l = tile_index(k)
+  DO n=1,nsnow(l)
+    csnow(l,n) = sice(l,n)*hcapi + sliq(l,n)*hcapw
+    rho_snow = (sice(l,n) + sliq(l,n)) / ds(l,n)
+    ksnow(l,n) = 2.22*(rho_snow/rho_water)**1.88
+  END DO
+END DO
+
+END SUBROUTINE snowtherm
+!!!!!#endif
+*/
+*/
+*/-----
+*DECK TRIDAG
+*/-----
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE TRIDAG---------------------------------------------------
+
+! Description:
+!     Solve tridiagonal matrix equation, numerical Recipes p43
+
+! Subroutine Interface:
+SUBROUTINE tridag(nvec,nmax,a,b,c,r,s)
+
+IMPLICIT NONE
+
+! Scalar arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ nvec                                                             &
+                !  Vector length
+,nmax           !  Maximum vector length
+
+! Array arguments with intent(in)
+REAL, INTENT(IN) ::                                               &
+ a(nmax)                                                          &
+                ! Below-diagonal matrix elements
+,b(nmax)                                                          &
+                ! Diagonal matrix elements
+,c(nmax)                                                          &
+                ! Above-diagonal matrix elements
+,r(nmax)        ! Matrix equation rhs
+
+! Array arguments with intent(out)
+REAL, INTENT(OUT) ::                                              &
+ s(nmax)        ! Solution vector
+
+! Local scalars
+INTEGER ::                                                        &
+ n              ! loop counter
+
+REAL ::                                                           &
+ beta           ! work
+
+! Local arrays
+REAL ::                                                           &
+ GAMMA(nvec)    ! work
+!-----------------------------------------------------------------------
+
+beta = b(1)
+s(1) = r(1) / beta
+
+DO n=2,nvec
+  GAMMA(n) = c(n-1) / beta
+  beta = b(n) - a(n)*GAMMA(n)
+  s(n) = ( r(n) - a(n)*s(n-1) ) / beta
+END DO
+
+DO n=nvec-1,1,-1
+  s(n) = s(n) - GAMMA(n+1)*s(n+1)
+END DO
+
+END SUBROUTINE tridag
+!!!!!#endif
+*/
+*/
+*/-----
+*DECK SNOWINTCTL
+*/-----
+!
+! *****************************COPYRIGHT*******************************
+
+! (c) [University of Edinburgh] [2009]. All rights reserved.
+! This routine has been licensed to the Met Office for use and
+! distribution under the JULES collaboration agreement, subject
+! to the terms and conditions set out therein.
+! [Met Office Ref SC237]
+
+! *****************************COPYRIGHT*******************************
+!  SUBROUTINE SNOW_INTCTL-----------------------------------------------
+
+! Description:
+!     Calling routine for snow module
+
+! Subroutine Interface:
+SUBROUTINE snow_intctl ( land_pts,timestep,stf_hf_snow_melt,      &
+                         ntiles,tile_pts,tile_index,catch_snow,   &
+                         con_snow,tile_frac,ls_snow,tfall,hcaps,  & 
+                         hcons,melt_tile,ei_tile,smcl1,sthf1,     &
+                         surf_htf_tile,tsoil1,tice1,tstar_tile,v_sat1,&
+                         rgrain,snow_grnd,snow_melt,snow_tile,    &
+                         hf_snow_melt,lying_snow,                 &
+                         snomlt_sub_htf,&
+                         l_snow_albedo, dzsnow, refreezing_layer, &
+                         refreezing_tile, refreezing,NELEV,        &
+! Prognostics for Essery snow scheme:
+            NSMAX,SNOWDEPTH,RHO_SNOW_GRND,SNOW_CAN,SNOW_SOIL_HTF, &
+                  NSNOW_REAL,DS,SICE,SLIQ,TSNOWLAYER,RHO_SNOW,RGRAINL )
+
+
+
+!!!!USE snow_param, ONLY : ds
+
+IMPLICIT NONE
+
+! Scalar arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ land_pts,                                                        &
+                       ! Total number of land points
+ nsmax,nelev
+                       ! Number of snow layers
+
+REAL, INTENT(IN) ::                                               &
+  dzsnow(nsmax),&
+ timestep              ! Timestep length (s)
+
+LOGICAL, INTENT(IN) ::                                            &
+ l_snow_albedo,&
+ stf_hf_snow_melt      ! Stash flag for snowmelt heat flux
+
+! Array arguments with intent(in)
+INTEGER, INTENT(IN) ::                                            &
+ ntiles                                                           &
+                       !  Number of land tiles
+,tile_pts(ntiles)                                                 &
+                       ! Number of tile points
+,tile_index(land_pts,ntiles)
+                       ! Index of tile points
+
+REAL, INTENT(IN) ::                                               &
+ catch_snow(land_pts,ntiles)                                      &
+                       ! canopy snow capacity (kg/m2)
+,con_snow(land_pts)                                               &
+                       ! Convective snowfall rate (kg/m2/s)
+,tile_frac(land_pts,ntiles)                                       &
+                       ! Tile fractions
+,tfall(land_pts,ntiles)                                       &
+,ls_snow(land_pts)                                                &
+                       ! Large-scale snowfall rate (kg/m2/s)
+,hcaps(land_pts)                                                  &
+                       ! Soil heat capacity of top layer(J/K/m3).
+,hcons(land_pts)                                                  &
+                       ! Thermal conductivity of top soil layer,
+!                            ! including water and ice (W/m/K)
+,smcl1(land_pts)                                                  &
+                       ! Moisture content of surface soil
+!                            ! layer (kg/m2)
+,sthf1(land_pts)                                                  &
+                       ! Frozen soil moisture content of
+!                            ! surface layer as a fraction of saturation.
+,surf_htf_tile(land_pts,ntiles)                                   &
+                       ! Surface heat flux (W/m2)
+,tsoil1(land_pts,nelev)                                           &
+,tice1(land_pts,nelev)                                            &
+                       ! Soil surface layer temperature (K)
+,tstar_tile(land_pts,ntiles)                                      &
+                       ! Tile surface temperature (K)
+,v_sat1(land_pts)      ! Surface soil layer volumetric
+!                            ! moisture concentration at saturation
+!
+!
+! Array arguments with intent(inout)
+REAL, INTENT(INOUT) ::                                            &
+ melt_tile(land_pts,ntiles)                                       &
+                       ! Snowmelt rate (kg/m2/s)
+,rgrain(land_pts,ntiles)                                          &
+                       ! Snow surface grain size (microns)
+,ei_tile(land_pts,ntiles)                                       &
+,snow_grnd(land_pts,ntiles)                                       &
+                       ! Snow mass on ground (kg/m2)
+,snow_tile(land_pts,ntiles)
+                       ! Lying snow on tiles (kg/m2)
+!
+!
+! Array arguments with intent(out)
+REAL, INTENT(OUT) ::                                              &
+ hf_snow_melt(land_pts)                                           &
+                          ! Gridbox snowmelt heat flux (W/m2)
+,lying_snow(land_pts)                                             &
+                          ! Gridbox snow mass (kg m-2)
+,snomlt_sub_htf(land_pts)                                         &
+                          ! Sub-canopy snowmelt heat flux (W/m2)
+,snow_melt(land_pts)                                              &
+                          ! Gridbox snowmelt (kg/m2/s)
+,refreezing_layer(land_pts,ntiles,nsmax)                          &
+,refreezing_tile(land_pts,ntiles)                                 &
+,refreezing(land_pts)
+!
+INTEGER :: NSNOW_INT(land_pts, ntiles)
+!                            ! Number of snow layers on ground on tiles
+
+!
+REAL, INTENT(INOUT) ::                                            &
+ SNOWDEPTH(land_pts, ntiles)                                      &
+!                            ! Snow depth on ground on tiles (m) 
+,RHO_SNOW_GRND(land_pts, ntiles)                                  &
+!                            ! Snowpack bulk density (kg/m3) 
+,SNOW_CAN(land_pts, ntiles)                                       &
+!                            ! Snow on the canopy (kg/m2) 
+,SNOW_SOIL_HTF(land_pts, ntiles)                                  &
+!                            ! Surface heat flux beneath snow (W/m2) 
+,NSNOW_REAL(land_pts, ntiles)                                          &
+!                            ! Number of snow layers on ground on tiles 
+!                            ! NOTE that this is converted to an integer. 
+,DS(land_pts, ntiles, nsmax)                                      &
+!                            ! Snow layer thickness (m) 
+,SICE(land_pts, ntiles, nsmax)                                    &
+!                            ! Snow layer ice mass on tiles (Kg/m2) 
+,SLIQ(land_pts, ntiles, nsmax)                                    &
+!                            ! Snow layer liquid mass on tiles (Kg/m2) 
+,TSNOWLAYER(land_pts, ntiles, nsmax)                              &
+!                            ! Snow layer temperature (K) 
+,RHO_SNOW(land_pts, ntiles, nsmax)                                &
+!                            ! Snow layer densities (kg/m3) 
+,RGRAINL(land_pts, ntiles, nsmax) 
+!                            ! Snow layer grain size on tiles (microns)
+!
+!-----------------------------------------------------------------------
+! External routines called:
+!-----------------------------------------------------------------------
+EXTERNAL snow
+
+! DEPENDS ON: snow
+
+      nsnow_int=int(nsnow_real)
+
+CALL snow (nelev,nsmax,land_pts,timestep,stf_hf_snow_melt,ntiles,&
+            tile_pts,tile_index,catch_snow,con_snow,tile_frac,ls_snow,&
+            tfall,hcaps,hcons,melt_tile,ei_tile,smcl1,sthf1,      &
+            surf_htf_tile,tsoil1,tice1,tstar_tile,v_sat1,         &
+            rgrain,rgrainl,rho_snow_grnd,sice,sliq,               &
+            snow_grnd,snow_tile,snowdepth,                        &
+            tsnowlayer,nsnow_int,ds,hf_snow_melt,lying_snow,rho_snow, &
+            snomlt_sub_htf,snow_soil_htf,snow_melt,               &
+            l_snow_albedo, dzsnow, refreezing_layer,              &
+            refreezing_tile, refreezing )
+
+       nsnow_real=real(nsnow_int)
+
+
+RETURN
+END SUBROUTINE snow_intctl
+*/-----
+*DECK C0DGC
+*/-----
+! *****************************COPYRIGHT*******************************
+! (C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module with UM setting of 
+! freezing temperatures 
+  
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+  
+      
+MODULE c_0_dg_c
+!
+!*L------------------COMDECK C_O_DG_C-----------------------------------
+! ZERODEGC IS CONVERSION BETWEEN DEGREES CELSIUS AND KELVIN
+! TFS IS TEMPERATURE AT WHICH SEA WATER FREEZES
+! TM IS TEMPERATURE AT WHICH FRESH WATER FREEZES AND ICE MELTS
+      REAL ZERODEGC,TFS,TM
+
+      PARAMETER(ZERODEGC=273.15, TFS=271.35, TM=273.15)
+!*----------------------------------------------------------------------
+!
+END MODULE c_0_dg_c
+*/
+*/
+*/
+*/-----
+*DECK CDENS
+*/-----
+! (C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module with UM setting of 
+! density of water    
+
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+
+MODULE c_densty
+!
+!*L-----------COMDECK C_DENSTY FOR SUBROUTINE SF_EXCH----------
+! RHOSEA    = density of sea water (kg/m3)
+! RHO_WATER = density of pure water (kg/m3)
+      REAL RHOSEA,RHO_WATER
+
+      PARAMETER(RHOSEA = 1000.0, RHO_WATER = 1000.0)
+!*----------------------------------------------------------------------
+!
+END MODULE c_densty
+*/
+*/
+*/
+*/-----
+*DECK CG
+*/-----
+!(C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module with UM setting of 'g'
+
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+
+MODULE c_g
+!*L------------------COMDECK C_G----------------------------------------
+! G IS MEAN ACCEL DUE TO GRAVITY AT EARTH'S SURFACE
+      REAL G
+
+      PARAMETER(G=9.80665)
+!*----------------------------------------------------------------------
+END MODULE c_g
+*/
+*/
+*/-----
+*DECK CPERMA
+*/-----
+!(C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module with UM setting of 
+! 
+  
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+              
+MODULE c_perma
+!
+ REAL HCAPW,HCAPI,RHO_ICE,DPSIDT
+ PARAMETER(                                                          &
+       HCAPW=4180                                                    &
+                       ! Specific heat capacity of water (J/kg/K)
+      ,HCAPI=2100                                                    &
+                       ! Specific heat capacity of ice (J/kg/K)
+      ,RHO_ICE=917                                                   &
+                       ! Density of ice (kg/m3)
+      ,DPSIDT=114.3)
+                       ! Rate of change of ice potential with temperatur
+!                      ! RHO_ICE*LF/ZERODEGC*1/(RHO_WATER*G) (m/K)
+!-----------------------------------------------------------------------
+
+END MODULE c_perma
+*/
+*/
+
+*/
+*/-----
+*DECK CPI
+*/-----
+! *****************************COPYRIGHT*******************************
+! (C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module with UM setting of 
+! pi
+  
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+        
+MODULE c_pi
+!
+!*L------------------COMDECK C_PI---------------------------------------
+!LL
+!LL 4.0 19/09/95  New value for PI. Old value incorrect
+!LL               from 12th decimal place. D. Robinson
+!LL
+      REAL PI,PI_OVER_180,RECIP_PI_OVER_180
+
+      PARAMETER(                                                  &
+        PI=3.14159265358979323846,                                &
+                                    ! Pi
+        PI_OVER_180 =PI/180.0,                                    &
+                                    ! Conversion factor degrees to radians
+         RECIP_PI_OVER_180 = 180.0/PI)
+                                    ! Conversion factor radians to
+                                   ! degrees
+!*----------------------------------------------------------------------
+!
+END MODULE c_pi
+*/
+*/
+*/-----
+*DECK CRHOWAT
+*/-----
+! (C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module with UM setting of 
+! density of water
+  
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+  
+MODULE c_rhowat
+!
+      REAL RHO_WATER              ! DENSITY OF WATER (KG/M3)
+!
+      PARAMETER (RHO_WATER = 1000.0)
+!
+END MODULE c_rhowat
+*/
+*/
+*/-----
+*DECK MAXDIMS
+*/-----
+! *****************************COPYRIGHT*******************************
+! (C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module defines absolute maximum values for array dimensions
+! that are used in IO
+  
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+
+
+MODULE max_dimensions
+!
+  IMPLICIT NONE
+!
+  INTEGER, PARAMETER ::                                               &
+    snow_layers_max = 10
+!
+  INTEGER, PARAMETER ::                                               &
+    ntiles_max = 9
+! Need to check that this is the correct value!!!
+!
+  INTEGER, PARAMETER ::                                               &
+    ntype_max = 9
+! Need to check that this is the correct value!!!
+!
+  INTEGER, PARAMETER ::                                               &
+    npft_max = 5
+! Need to check that this is the correct value!!!
+
+END MODULE max_dimensions
+*/
+*/
+*/
+*/-----
+*DECK RADPAR
+*/-----
+! *****************************COPYRIGHT*******************************
+! (C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module sets parameter values for radiation routines.
+  
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+
+
+MODULE rad_param
+
+
+  IMPLICIT NONE
+
+!-----------------------------------------------------------------------
+!  Parameters for snow grain size.
+!-----------------------------------------------------------------------
+! DEFAULTS TAKEN FROM JULES EXAMPLE CONTROL FILES
+  REAL ::                                                           &
+   r0 = 50.                                                         &
+                  !  Grain size for fresh snow (microns)
+  ,rmax = 2000.
+                  !  Maximum snow grain size (microns).
+
+!-----------------------------------------------------------------------
+! Parameters for snow grain size growth (HCTN30.16).
+! Values are for melting snow, cold fresh snow and cold aged snow
+! respectively.
+!-----------------------------------------------------------------------
+  REAL ::                                                           &
+   snow_ggr(3)    !  snow grain area growth
+!                    rates (microns**2 s-1).
+! DEFAULTS TAKEN FROM JULES EXAMPLE CONTROL FILES
+  DATA snow_ggr / 0.6, 0.06, 0.23e6 /
+
+!-----------------------------------------------------------------------
+! Parameters for prognostic, spectral snow albedo.
+!-----------------------------------------------------------------------
+  REAL ::                                                           &
+   amax(2)        !  Maximum albedo for fresh snow
+!                    (values for VIS and NIR)
+! DEFAULTS TAKEN FROM JULES EXAMPLE CONTROL FILES
+  DATA amax / 0.98, 0.7 /
+
+!-----------------------------------------------------------------------
+!  Parameters for ( diagnostic) all-band snow albedo.
+  REAL :: dtland = 2.
+                  !  degrees Celsius below freezing point at which
+!                    snow albedo equals cold deep snow albedo. This
+!                    is 2 in HCTN30.4. Must not be zero!
+
+  REAL :: kland_numerator = 0.3
+                  !  KLAND is calculated as KLAND_NUMERATOR / DTLAND
+!                    in jules_init once the namelist has been read
+
+  REAL :: kland
+                  !  used in snow-ageing effect on snow albedo.
+!                    This is 0.3 in HCTN30.4, although
+!                    note that the last term in that eqn should be
+!                    divided by dtland.
+
+  REAL :: maskd = 50.
+                  !  used in the exponent of equation weighting
+!                    snow and snow-free albedo to get tile
+!                    albedo.
+!          This is 0.2 in HCTN30.5, where it is used as maskd*snowMass,
+!          assuming snow density=250kg/m3.
+!          It is now used as maskd*snowDepth, so maskd=50 gives the same
+!          relationship as HCTN30.5.
+
+  REAL :: tcland
+                  !  temperature below which snow albedo equals
+!                    cold deep snow albedo (HCTN30.4)
+!                    This is initialised as TM - DTLAND in
+!                    jules_init once the namelist has been read
+!-----------------------------------------------------------------------
+
+  NAMELIST /jules_rad_param/ r0,rmax,snow_ggr,amax,maskd,dtland,    &
+                             kland_numerator
+
+END MODULE rad_param
+*/
+*/
+*/
+*/-----
+*DECK SNOWPAR
+*/-----
+! *****************************COPYRIGHT*******************************
+! (C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module with Parameters for snow parameterisation.
+
+MODULE snow_param
+
+  USE max_dimensions, ONLY : snow_layers_max, npft_max
+
+  IMPLICIT NONE
+
+! Default values taken from example JULES input file
+  REAL ::                                                           &
+                  ! scalars
+   rho_snow_const = 250.0                                           &
+                  ! constant density of lying snow (kg per m**3)
+  ,snow_hcon = 0.265                                                &
+                  ! Thermal conductivity of lying snow
+                  ! (Watts per m per K).
+  ,snow_hcap = 0.63e6                                               &
+                  ! Thermal capacity of lying snow (J/K/m3)
+  ,snowliqcap = 0.05                                                &
+                  ! Liquid water holding capacity of lying snow
+                  ! as a fraction of snow mass.
+  ,snowinterceptfact = 0.7                                          &
+                  ! constant in relationship between mass of
+                  ! intercepted snow and snowfall rate
+  ,snowloadlai = 4.4                                                &
+                  ! ratio of maximum canopy snow load to leaf
+                  ! area index (kg m-2)
+  ,snowunloadfact = 0.4
+                  ! constant in relationship between canopy snow
+                  ! unloading and canopy snow melt rate
+
+
+  LOGICAL, ALLOCATABLE ::                                           &
+                    !  ARRAYS
+   cansnowtile(:)   !  Switch for canopy snow model on each tile
+!                      This can be TRUE only at PFT tiles.
+
+!-----------------------------------------------------------------------
+! Define fixed length counterparts for any arrays that we want to
+! initialise in IO using a namelist
+!-----------------------------------------------------------------------
+  REAL ::                                                           &
+   dzsnow_io(snow_layers_max) &
+   ,dzsnow(4)
+
+  LOGICAL ::                                                        &
+   cansnowpft(npft_max)
+
+   DATA cansnowpft / npft_max * .FALSE. /
+
+
+  NAMELIST /jules_snow_param/ rho_snow_const,snow_hcon,snow_hcap,   &
+                              snowliqcap,snowinterceptfact,         &
+                              snowloadlai,snowunloadfact,dzsnow_io, &
+                              cansnowpft
+
+END MODULE snow_param
+*/
+*/
+*/-----
+*DECK CLHEAT
+*/-----
+!
+! *****************************COPYRIGHT*******************************
+! (C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module with UM setting of 
+! latent heat params
+  
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+    
+MODULE c_lheat
+!*L------------------COMDECK C_LHEAT------------------------------------
+! LC IS LATENT HEAT OF CONDENSATION OF WATER AT 0DEGC
+! LF IS LATENT HEAT OF FUSION AT 0DEGC
+      REAL LC,LF
+
+      PARAMETER(LC=2.501E6,  LF=0.334E6)
+!*----------------------------------------------------------------------
+END MODULE c_lheat
+!
+*/
+*/-----
+*DECK PROGNOSTICS
+*/-----
+!
+! *****************************COPYRIGHT*******************************
+! (C) Crown copyright Met Office. All rights reserved.
+! For further details please refer to the file COPYRIGHT.txt
+! which you should have received as part of this distribution.
+! *****************************COPYRIGHT*******************************
+!
+! Module containing all of the prognostic variables
+
+MODULE prognostics
+
+! Description
+! Module containing all of the prognostic variables,
+! i.e.those required to be kept from one timestep
+! to another. Variables all appear in a model dump - NOT AT PRESENT!
+! And some of these are not prognostics (eg smc)....
+
+! Code Description:
+!   Language: FORTRAN 90
+!   This code is written to UMDP3 v8.2 programming standards.
+
+! Declarations:
+
+
+  INTEGER, ALLOCATABLE ::                                            &
+    nsnow(:,:)      !  Number of snow layers on ground on tiles
+
+  REAL, ALLOCATABLE ::                                               &
+    sice(:,:,:),                                                     &
+!                       Snow layer ice mass on tiles (Kg/m2)
+    sliq(:,:,:),                                                     &
+!                       Snow layer liquid mass on tiles (Kg/m2)
+    snowdepth(:,:),                                                  &
+!                       Snow depth on ground on tiles (m)
+    tsnow(:,:,:),                                                    &
+!                       Snow layer temperature (K)
+    rgrainl(:,:,:),                                                  &
+!                       Snow layer grain size on tiles (microns)
+    rho_snow_grnd(:,:),                                              &
+!                       Snowpack bulk density (kg/m3)
+    snow_can(:,:),                                                   &
+!                       Snow on the canopy (kg/m2)
+    rho_snow(:,:,:),                                                 &
+!                       Snow layer densities (m)
+    snow_soil_htf(:,:)
+!                       Surface heat flux beneath snow (W/m2)
+
+
+
+!-----------------------------------------------------------------------
+! If we are not in UM, define everything else that is needed
+!-----------------------------------------------------------------------
+#if !defined(UM_RUN)
+
+  REAL, ALLOCATABLE ::                                               &
+    canht_ft(:,:),                                                   &
+!                  Canopy height (m)
+    canopy(:,:),                                                     &
+!                  Surface/canopy water for snow-free land tiles (kg/m2)
+    canopy_gb(:),                                                    &
+!                  Gridbox canopy water content (kg/m2)
+    cs(:,:),                                                         &
+!                  Soil carbon (kg C/m2)
+    di(:,:),                                                         &
+!                  "Equivalent thickness" of sea-ice GBM agregate (m)
+    di_ncat(:,:,:),                                                  &
+!                  "Equivalent thickness" of sea-ice catagories (m)
+    gc(:,:),                                                         &
+!                  "Stomatal" conductance to evaporation for land tiles(m/s)
+    gs(:),                                                           &
+!                  "Stomatal" conductance to evaporation (m/s)
+    lai(:,:),                                                        &
+!                  LAI of plant functional types
+    rgrain(:,:),                                                     &
+!                  Snow surface grain size on tiles (microns)
+    smc(:),                                                          &
+!                  Soil moisture in a layer at the surface (kg/m2).
+!      Note that SMC is used twice:
+!      1) SF_EXPL and SF_IMPL use it to return the available water in the total
+!         soil column (as calculated in PHYSIOL)
+!      2) HYDROL uses it to return the available water in a layer of a given
+!         depth (as calculated in SOILMC)
+    smcl(:,:),                                                       &
+!                  Soil moisture content of layers (kg/m2)
+    snow_tile(:,:),                                                  &
+!                  Lying snow on tiles (kg/m2)
+    snow_grnd(:,:),                                                  &
+!                  Snow on the ground (kg/m2)
+    snow_mass(:,:),                                                  &
+!                  Gridbox snowmass (kg/m2)
+    snow_mass_sea(:,:),                                              &
+!                  Snow on sea-ice (Kg/m2)
+    soot(:),                                                         &
+!                  Snow soot content (kg/kg)
+    t_soil(:,:),                                                     &
+!                  Sub-surface temperatures (K)
+    ti(:,:),                                                         &
+!                  Sea-ice surface layer
+    tstar_tile(:,:),                                                 &
+!                  Tile surface temperatures (K)
+    z0msea(:,:),                                                     &
+!                  Sea-surface roughness length for momentum (m).
+    routestore(:,:)
+!                 channel storage (kg). This is defined at all
+!                 points on the routing grid, both land and sea, although it is
+!                 only used at land points. I've used this full grid
+!                 approach mainly for compatability with current
+!                 code in the UM, and also because the grid is needed
+!                 for the calculated flow, so doing everything on grid
+!                 simplifies i/o as we don't need to deal with both
+!                 vector and grid i/o.
+
+#endif
+
+END MODULE prognostics
+!
+*/
+*/-----
+*DECK SOILPARAM
+*/-----
+!
+MODULE SOIL_PARAM
+
+IMPLICIT NONE
+
+! Other variables used in soil calculations
+!-----------------------------------------------------------------------
+!
+REAL ::  DZSOIL(4)               ! Soil layer thicknesses (m).
+!DZSOIL(1) = 0.100
+!DZSOIL(2) = 0.250
+!DZSOIL(3) = 0.650
+!DZSOIL(4) = 2.000
+DATA DZSOIL /0.1,0.25,0.65,2.0/
+
+END MODULE SOIL_PARAM
+!
