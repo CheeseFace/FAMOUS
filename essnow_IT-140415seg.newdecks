@@ -205,7 +205,7 @@ DO k=1,tile_pts
 
 ! If density exceeds that of ice, then reset to ice density (SEG)
 ! The isnan() call is meant to trap numeric errors from above
-    IF (rho > 917.0 .or. isnan(rho)) 
+    IF (rho > 917.0 .or. isnan(rho))                              &
      rho = 917.0  ! Limit to ice density
 !
     IF ( rho > EPSILON(rho) )                                     &
