@@ -205,7 +205,7 @@ DO k=1,tile_pts
 
 ! If density exceeds that of ice, then reset to ice density (SEG)
 ! The isnan() call is meant to trap numeric errors from above
-    IF (rho > 917.0 .or. isnan(rho)) 
+    IF (rho > 917.0 .or. isnan(rho))                              &
      rho = 917.0  ! Limit to ice density
 !
     IF ( rho > EPSILON(rho) )                                     &
@@ -473,6 +473,9 @@ REAL ::                                                           &
                      ! Liquid content before adjustment (kg/m2)
 ,u(nsmax)            ! Layer energy contents
 
+!+ Error code SEG
+REAL :: seg_dum
+!- Error code SEG
 !-----------------------------------------------------------------------
 ! External routines used
 !-----------------------------------------------------------------------
@@ -555,9 +558,10 @@ DO k=1,tile_pts
     iznew = 1
 
 !     Loop over the old layers.
-!    DO old=0,nold(i)
-! Error fix  SEG 29/4/2015
+    !+ Error code SEG
+    !DO old=0,nold(i)
     DO old=1,nold(i)
+    !- Error code SEG
 
 !       All of this old layer remains to be reassigned to new layer(s).
       oldremains = d0(i,old)
@@ -583,8 +587,26 @@ DO k=1,tile_pts
           IF ( d0(i,old) > thin_snow_limit ) THEN
             wt =  newremains(new) / d0(i,old)
             u(new) = u(new) + e(old) * wt
+            !+ Error code SEG
+            seg_dum = sice(i,new)
+            !- Error code SEG
             sice(i,new) = sice(i,new) + s(old) * wt
+            !+ Error code SEG
+            if (isnan(sice(i,new))) then
+               write(6,*) 'Error 1 relayer ',seg_dum,s(old),wt
+               stop 40
+            endif
+            seg_dum = sliq(i,new )
+            !- Error code SEG
+
             sliq(i,new) = sliq(i,new) + w(old) * wt
+            !+ Error code SEG
+            if (isnan(sliq(i,new))) then
+               write(6,*) 'Error 2 relayer ',seg_dum,w(old),wt
+               stop 41
+            endif
+            !- Error code SEG
+
             if (l_snow_albedo) rgrainl(i,new) = rgrainl(i,new) +     &
                              r(old) * newremains(new)
           END IF
@@ -602,9 +624,33 @@ DO k=1,tile_pts
 !           Add properties from old layer to accumulation for new layer.
           IF ( d0(i,old) > thin_snow_limit ) THEN
             wt = oldremains /  d0(i,old)
+            !+ Error code SEG
+            if (isnan(wt)) then
+              write(6,*) 'Error 3- relayer ',oldremains,d0(i,old)
+              write(6,*) 'Error 3/ relayer ',i,old
+              stop 42
+            endif
+            !- Error code SEG
             u(new) = u(new) + e(old) * wt
+            !+ Error code SEG
+            seg_dum = sice(i,new)
+            !- Error code SEG
             sice(i,new) = sice(i,new) + s(old) * wt
+            !+ Error code SEG
+            if (isnan(sice(i,new))) then
+               write(6,*) 'Error 3a relayer ',seg_dum,s(old)
+               write(6,*) 'Error 3b relayer ', wt,'!!!'
+               stop 43
+            endif
+            seg_dum = sliq(i,new )
+            !- Error code SEG
             sliq(i,new) = sliq(i,new) + w(old) * wt
+            !+ Error code SEG
+            if (isnan(sliq(i,new))) then
+               write(6,*) 'Error 4 relayer ',seg_dum,w(old),wt
+               stop 44
+            endif
+            !- Error code SEG
             if (l_snow_albedo) rgrainl(i,new) = rgrainl(i,new) + &
                                                 r(old) * oldremains
           END IF
@@ -1413,6 +1459,10 @@ REAL ::                                                           &
                  ! Temperature increments (k)
 ,r(nsmax)        ! Matrix equation rhs
 
+!+ Error code SEG
+REAL ::  seg_dum
+!- Error code SEG
+
 !-----------------------------------------------------------------------
 ! External routines called:
 !-----------------------------------------------------------------------
@@ -1426,6 +1476,9 @@ refreezing_layer(:,:) = 0.0
 refreezing_tile(:) = 0.0
 !-----------------------------------------------------------------------
 
+!+ Error code SEG
+write(6,*) 'In snowpack ... '
+!- Error code  SEG
 
 DO k=1,tile_pts
   i = tile_index(k)
@@ -1565,8 +1618,26 @@ DO k=1,tile_pts
         dsice = -coldsnow / lf
         IF ( dsice > sice(i,n) ) dsice = sice(i,n)
         ds(i,n) = ( 1.0 - dsice/sice(i,n) ) * ds(i,n)
+        !+ Error code SEG
+        seg_dum=sice(i,n)
+        !- Error code SEG
         sice(i,n) = sice(i,n) - dsice
+        !+ Error code SEG
+        if (isnan(sice(i,n))) then
+          write(6,*) 'Error 1 snowpack ',seg_dum,dsice,coldsnow,lf
+          stop 30
+        endif
+        seg_dum=sliq(i,n)
+        !- Error code SEG
+
         sliq(i,n) = sliq(i,n) + dsice
+
+        !+ Error code SEG
+        if (isnan(sliq(i,n))) then
+          write(6,*) 'Error 2 snowpack ',seg_dum,dsice,coldsnow,lf
+          stop 31
+        endif
+        !- Error code SEG
       END IF
     END DO
 ! Melt still > 0? - no snow left
@@ -1612,8 +1683,24 @@ DO k=1,tile_pts
       IF (coldsnow > 0) THEN
 ! Liquid can freeze
         dsice = MIN(sliq(i,n), coldsnow / lf)
+        !+ Error code SEG
+        seg_dum = sliq(i,n)
+        !- Error code SEG
         sliq(i,n) = sliq(i,n) - dsice
+        !+ Error code SEG
+        if (isnan(sliq(i,n))) then
+          write(6,*) 'Error 3 snowpack ',seg_dum,dsice,coldsnow,lf
+          stop 32
+        endif
+        seg_dum=sice(i,n)
+        !- Error code SEG
         sice(i,n) = sice(i,n) + dsice
+        !+ Error code SEG
+        if (isnan(sice(i,n))) then
+          write(6,*) 'Error 4 snowpack ',seg_dum,dsice,coldsnow,lf
+          stop 33
+        endif
+        !- Error code SEG
         tsnow(i,n) = tsnow(i,n) + lf*dsice/csnow(i,n)
         refreezing_layer(i,n) = dsice / timestep
         refreezing_tile(i) = refreezing_tile(i)   &
@@ -1739,7 +1826,19 @@ DO k=1,tile_pts
   l = tile_index(k)
   DO n=1,nsnow(l)
     csnow(l,n) = sice(l,n)*hcapi + sliq(l,n)*hcapw
+    !+ Error code SEG
+    if (isnan(csnow(l,n))) then
+       write(6,*) 'Error 1 csnow ',sice(l,n),sliq(l,n)
+       stop 20
+    endif   
+    !- Error code SEG
     rho_snow = (sice(l,n) + sliq(l,n)) / ds(l,n)
+    !+ Error code SEG
+    if (isnan(rho_snow)) then
+       write(6,*) 'Error 2 rho_snow ',sice(l,n),sliq(l,n), ds(l,n)
+       stop 21
+    endif
+    !- Error code SEG
     ksnow(l,n) = 2.22*(rho_snow/rho_water)**1.88
   END DO
 END DO
