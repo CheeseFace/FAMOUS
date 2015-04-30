@@ -555,9 +555,7 @@ DO k=1,tile_pts
     iznew = 1
 
 !     Loop over the old layers.
-!    DO old=0,nold(i)
-! Error fix  SEG 29/4/2015
-    DO old=1,nold(i)
+    DO old=0,nold(i)
 
 !       All of this old layer remains to be reassigned to new layer(s).
       oldremains = d0(i,old)
