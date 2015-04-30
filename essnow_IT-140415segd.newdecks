@@ -474,7 +474,7 @@ REAL ::                                                           &
 ,u(nsmax)            ! Layer energy contents
 
 !+ Error code SEG
-REAL :: seg_dum
+REAL :: seg_dum, seg_dum2, seg_dum3, seg_dum4
 !- Error code SEG
 !-----------------------------------------------------------------------
 ! External routines used
@@ -490,9 +490,21 @@ DO k=1,tile_pts
   i = tile_index(k)
   IF ( nsnow(i) > 0 ) THEN
     IF ( sice0(i) > 0.0 ) d0(i,0) = sice0(i) / rho0(i)
+    !+ Error code SEG
+    if (abs(d0(i,0)) > 10000 ) then
+       write(6,*) 'Error 55 relayer ',sice0(i),rho0(i)
+       stop 55
+    endif
+    !- Error code SEG
   ELSE IF ( sice0(i) > 0.0 ) THEN
 !     In this case, SICE0 is the mass of the pack, so use RHO_SNOW_GRND.
     d0(i,0) = sice0(i) / rho_snow_grnd(i)
+    !+ Error code SEG
+    !if (isnan(d0(i,0))) then
+    if (abs(d0(i,0)) > 10000 ) then
+       write(6,*) 'Error 56 relayer ',sice0(i),rho_snow_grnd(i)
+       stop 56
+    endif
   END IF
   d0(i,1:nsnow(i)) = ds(i,1:nsnow(i))
 END DO
@@ -559,12 +571,22 @@ DO k=1,tile_pts
 
 !     Loop over the old layers.
     !+ Error code SEG
-    !DO old=0,nold(i)
-    DO old=1,nold(i)
+    DO old=0,nold(i)
+    ! Note: zero indexing is OK (see array declaration)
+    !DO old=1,nold(i)
     !- Error code SEG
 
 !       All of this old layer remains to be reassigned to new layer(s).
       oldremains = d0(i,old)
+      !+ Error code SEG
+      !if (isnan(oldremains)) then
+      if (abs(oldremains) > 1000 ) then
+         write(6,*) 'Error 53 relayer ',d0(i,old)
+         write(6,*) 'Error 53a relayer ',i,old
+         write(6,*) 'Error 53b relayer ',oldremains
+         stop 53
+      endif
+      !- Error code SEG
 
 !       Point to first new layer with remaining space.
       izz = iznew
@@ -579,7 +601,18 @@ DO k=1,tile_pts
 !-----------------------------------------------------------------------
 
 !           Decrement old layer by the remaining space in new layer.
+          !+ Error code SEG
+          seg_dum = oldremains
+          !- Error code SEG
           oldremains = oldremains - newremains(new)
+          !+ Error code SEG
+          !if (isnan(oldremains)) then
+          if (abs(oldremains) > 1000 ) then
+           write(6,*) 'Error 54- relayer ',newremains(new),new
+           write(6,*) 'Error 54/ relayer ',seg_dum
+           stop 54
+          endif
+          !- Error code SEG
 
 !           Add properties from old layer to accumulation for new layer.
 !           Note that wt is <= 1 since here we have oldRemains>newRemains,
