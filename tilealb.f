@@ -332,6 +332,9 @@ C----------------------------------------------------------------------
                 IF (N.gt.NTYPE-NELEV) SNOW(L) = SNOW_TILE(L,NELEV+k)
                 IF (N.gt.NTYPE-NELEV) Z0(L) = Z0_TILE(L,NELEV+K)
                 IF (N.gt.NTYPE-NELEV.and.L_ESSERY_SNOW) THEN
+                  ! Bugfix June,2015 SEG
+                  ! Ice points previously not accumulating snow
+                  ! at high levels!
                   if (nsnow(l,nelev+k).gt.0) gbm_rho_snow(L)=
      &                                rho_snow_array(l,nelev+k,1)
                   if (nsnow(l,nelev+k).eq.0) gbm_rho_snow(L)=
