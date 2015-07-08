@@ -2243,9 +2243,10 @@ C Constants for physics  routines. Array sizes are resolution dependent.
 !-- parameters -------!
       INTEGER, PARAMETER    :: gather_pe     = 0
       INTEGER, PARAMETER    :: ICE_COUPLING_MONTH     = 12
-      REAL                  :: ICE_RESET_SNOWMASS
       REAL, PARAMETER       :: GLIMMER_ICE_DENSITY    = 910.
       REAL, PARAMETER       :: GLIMMSET_RS_SDEPTH     = 100.
+      REAL, PARAMETER       :: ICE_RESET_SNOWMASS  = 
+     &      GLIMMER_ICE_DENSITY * GLIMMSET_RS_SDEPTH 
 !-- local variables --!
       CHARACTER (LEN=80) :: CMESSAGE        !  Error return message
 
@@ -2322,7 +2323,7 @@ C Constants for physics  routines. Array sizes are resolution dependent.
      & write(6,*)"not coupling - want 1st tstep of month"
      & ,ICE_COUPLING_MONTH
 
-        ice_reset_snowmass=GLIMMSET_RS_SDEPTH*GLIMMER_ICE_DENSITY
+      !  ice_reset_snowmass=GLIMMSET_RS_SDEPTH*GLIMMER_ICE_DENSITY
       !  ice_reset_snowmass=0.
       !  do ns=1,10
       !    ice_reset_snowmass=ice_reset_snowmass
@@ -2332,6 +2333,7 @@ C Constants for physics  routines. Array sizes are resolution dependent.
       IF (L_ICE_COUPLE_STEP) THEN
 
       write(6,*)"Coupling to ice sheet"
+      write(6,*)"ice_reset_snowmass ",ice_reset_snowmass
       !---------------------------------------------------------------!
         Call gather_ice_fields(
 C All sizes
